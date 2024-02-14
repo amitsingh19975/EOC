@@ -916,8 +916,12 @@ impl Lexer {
             // operator ('operator') { ... }
 
             match ch {
-                c if Identifier::is_operator_start_code_point(c) => {
-                    let span = self.skip_while(|c| Identifier::is_operator_continuation_code_point(c));
+                c if Identifier::is_operator_start_code_point(c) || is_valid_identifier_start_code_point(c) => {
+                    let span = if is_valid_identifier_start_code_point(c) {
+                        self.skip_while(|c| is_valid_identifier_continuation_code_point(c))
+                    } else {
+                        self.skip_while(|c| Identifier::is_operator_continuation_code_point(c))
+                    };
                     let slice = &self.source_manager[span];
                     tokens.push(Token::new(TokenKind::Operator, span, slice));
                     let dup = self.custom_operators.iter().filter(|op| op.identifier.as_str() == std::str::from_utf8(slice).unwrap()).last();
@@ -963,7 +967,7 @@ impl Lexer {
         if !operator_found {
             let info = self.source_manager.get_source_info(operator_span);
             self.diagnostics.builder()
-                .report(DiagnosticLevel::Error, format!("Expecting an operator after 'operator'"), info, None)
+                .report(DiagnosticLevel::Error, format!("Expecting an operator or identifier after 'operator'"), info, None)
                 .commit();
         }
 

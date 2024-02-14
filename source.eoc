@@ -1,5 +1,5 @@
 struct Int32;
 
-keyword i32 {
+operator i32;
 
-}
+1i32;
