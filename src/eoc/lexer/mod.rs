@@ -924,7 +924,7 @@ impl Lexer {
                     };
                     let slice = &self.source_manager[span];
                     tokens.push(Token::new(TokenKind::Operator, span, slice));
-                    let dup = self.custom_operators.iter().filter(|op| op.identifier.as_str() == std::str::from_utf8(slice).unwrap()).last();
+                    let dup = self.custom_operators.iter().filter(|op| op.identifier.as_str().as_bytes() == slice).last();
                     let is_invalid = dup.is_some() ||
                         slice == b"." || slice == b"...";
                     if is_invalid {
@@ -999,7 +999,7 @@ impl Lexer {
                     let span = self.skip_while(|c| is_valid_identifier_continuation_code_point(c));
                     let slice = &self.source_manager[span];
                     tokens.push(Token::new(TokenKind::CustomKeyword, span, slice));
-                    let dup = self.custom_keywords.iter().filter(|op| op.identifier.as_str() == std::str::from_utf8(slice).unwrap()).last();
+                    let dup = self.custom_keywords.iter().filter(|op| op.identifier.as_str().as_bytes() == slice).last();
                     let is_invalid = dup.is_some();
                     if is_invalid {
                         let info = format!("The keyword '{}' is already defined", std::str::from_utf8(slice).unwrap());
