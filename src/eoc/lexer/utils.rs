@@ -115,20 +115,6 @@ impl ParenMatching {
         }
     }
 
-    pub(crate) fn is_opening(c: TokenKind) -> bool {
-        match c {
-            TokenKind::OpenParen | TokenKind::OpenBracket | TokenKind::OpenBrace | TokenKind::ReflectionStart | TokenKind::Backtick => true,
-            _ => false,
-        }
-    }
-
-    pub(crate) fn is_closing(c: TokenKind) -> bool {
-        match c {
-            TokenKind::CloseParen | TokenKind::CloseBracket | TokenKind::CloseBrace | TokenKind::ReflectionEnd | TokenKind::Backtick => true,
-            _ => false,
-        }
-    }
-
     pub(crate) fn is_reflection_block(source: &[u8], cursor: usize, reflection_start_code_points: &[u8]) -> bool {
         let start = cursor;
         let end = start + reflection_start_code_points.len();
