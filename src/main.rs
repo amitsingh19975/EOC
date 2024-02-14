@@ -10,7 +10,8 @@ fn main() -> Result<()> {
     let (tokens, diagnostics) = lexer.lex();
     tokens.iter().for_each(|token| println!("{}", token));
     println!("{}", diagnostics);
-    println!("{:#?}", lexer.get_custom_operators());
+    println!("Operators: {:#?}", lexer.get_custom_operators());
+    println!("Keywords: {:#?}", lexer.get_custom_keywords());
     // let mut diagnostics = eoc::utils::diagnostic::DiagnosticBag::new(filepath);
     // diagnostics.builder()
     //     .add_warning("This is an error".to_string(), None)

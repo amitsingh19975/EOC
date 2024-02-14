@@ -46,6 +46,8 @@ pub(crate) enum TokenKind {
     Out, // out
     InOut, // inout
     Dollar, // $
+    KwKeyword, // keyword
+    CustomKeyword, // custom keyword
 
     // Punctuation
     OpenParen, // (
@@ -430,6 +432,8 @@ impl Token {
             TokenKind::Out |
             TokenKind::InOut |
             TokenKind::Dollar |
+            TokenKind::CustomKeyword |
+            TokenKind::KwKeyword |
             TokenKind::Ellipsis => true,
             _ => false,
         }
@@ -493,6 +497,8 @@ impl From<&[u8]> for TokenKind {
             b"in" => TokenKind::In,
             b"out" => TokenKind::Out,
             b"inout" => TokenKind::InOut,
+            b"$" => TokenKind::Dollar,
+            b"keyword" => TokenKind::KwKeyword,
             _ => TokenKind::Identifier,
         }
     }

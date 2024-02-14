@@ -5,7 +5,7 @@ pub(crate) mod token;
 pub(crate) mod utils;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct CustomOperator {
+pub(crate) struct CustomIdentifier {
     pub(crate) identifier: Identifier,
     pub(crate) span: Span
 }
@@ -15,7 +15,8 @@ pub(crate) struct Lexer {
     cursor: usize,
     paren_balance: Vec<(TokenKind, Span)>,
     diagnostics: Diagnostic,
-    custom_operators: Vec<CustomOperator>,
+    custom_operators: Vec<CustomIdentifier>,
+    custom_keywords: Vec<CustomIdentifier>,
 }
 
 impl Lexer {
@@ -26,6 +27,7 @@ impl Lexer {
             paren_balance: Vec::new(),
             diagnostics: diagnostic.into(),
             custom_operators: Vec::new(),
+            custom_keywords: Vec::new(),
         }
     }
 
@@ -113,8 +115,12 @@ impl Lexer {
         self.paren_balance.clear();
     }
 
-    pub(crate) fn get_custom_operators(&self) -> &Vec<CustomOperator> {
+    pub(crate) fn get_custom_operators(&self) -> &Vec<CustomIdentifier> {
         &self.custom_operators
+    }
+
+    pub(crate) fn get_custom_keywords(&self) -> &Vec<CustomIdentifier> {
+        &self.custom_keywords
     }
 
     fn lex_identifier(&mut self, tokens: &mut Vec<Token>, should_parse_nested_operator: bool) {
@@ -124,8 +130,11 @@ impl Lexer {
         tokens.push(Token::new(kind, span, slice));
 
         if should_parse_nested_operator {
-            if b"operator" == slice {
-                let new_tokens = self.lex_custom_operator();
+            if kind == TokenKind::KwOperator {
+                let new_tokens = self.lex_custom_operator(span);
+                tokens.extend(new_tokens);
+            } else if kind == TokenKind::KwKeyword {
+                let new_tokens = self.lex_custom_keyword(span);
                 tokens.extend(new_tokens);
             }
         }
@@ -724,7 +733,13 @@ impl Lexer {
                 break;
             }
 
-            if let (Some(token), len) = self.validate_custom_operator(&self.source_manager[self.cursor..]) {
+            if let (Some(token), len) = self.match_custom_operator(&self.source_manager[self.cursor..]) {
+                tokens.push(token);
+                self.cursor += len;
+                continue;
+            }
+
+            if let (Some(token), len) = self.match_custom_keyword(&self.source_manager[self.cursor..]) {
                 tokens.push(token);
                 self.cursor += len;
                 continue;
@@ -835,7 +850,7 @@ impl Lexer {
         (tokens, &self.diagnostics)
     }
 
-    fn validate_custom_operator(&self, source: &[u8]) -> (Option<Token>, usize){
+    fn match_custom_operator(&self, source: &[u8]) -> (Option<Token>, usize){
         let mut valid_op = None;
         let mut len = 0;
 
@@ -857,8 +872,31 @@ impl Lexer {
         (valid_op, len)
     }
 
-    fn lex_custom_operator(&mut self) -> Vec<Token> {
+    fn match_custom_keyword(&self, source: &[u8]) -> (Option<Token>, usize) {
+        let mut valid_kw = None;
+        let mut len = 0;
+
+        for kw in self.custom_keywords.iter() {
+            let bytes = kw.identifier.as_str().as_bytes();
+            if bytes.len() > source.len() {
+                continue;
+            }
+            let source = &source[..bytes.len()];
+            let start = self.cursor;
+            let end = start + bytes.len();
+            if bytes == source {
+                valid_kw = Some(Token::new(TokenKind::CustomKeyword, Span::from_usize(start, end), bytes));
+                len = bytes.len();
+                break;
+            }
+        }
+
+        (valid_kw, len)
+    }
+
+    fn lex_custom_operator(&mut self, operator_span: Span) -> Vec<Token> {
         let mut tokens: Vec<Token> = Vec::new();
+        let mut operator_found = false;
 
         loop {
             let ch = self.peek_char();
@@ -900,7 +938,8 @@ impl Lexer {
                         continue;
                     }
                     let identifier = Identifier::new(std::str::from_utf8(slice).unwrap().to_string());
-                    self.custom_operators.push(CustomOperator { identifier, span })
+                    self.custom_operators.push(CustomIdentifier { identifier, span });
+                    operator_found = true;
                 }
                 '(' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
@@ -920,6 +959,86 @@ impl Lexer {
                 }
             }
         }
+
+        if !operator_found {
+            let info = self.source_manager.get_source_info(operator_span);
+            self.diagnostics.builder()
+                .report(DiagnosticLevel::Error, format!("Expecting an operator after 'operator'"), info, None)
+                .commit();
+        }
+
+        tokens
+    }
+
+    fn lex_custom_keyword(&mut self, keyword_span: Span) -> Vec<Token> {
+        let mut tokens: Vec<Token> = Vec::new();
+        let mut keyword_found = false;
+        loop {
+            let ch = self.peek_char();
+            if ch.is_none() {
+                break;
+            }
+
+            let ch = unsafe {
+                ch.unwrap_unchecked()
+            };
+
+            if ch.is_ascii_whitespace() {
+                self.skip_whitespace().map(|token| tokens.push(token));
+                continue;
+            }
+
+            // keyword '('? keyword ')'? { ... }
+
+            match ch {
+                c if is_valid_identifier_start_code_point(c) => {
+                    let span = self.skip_while(|c| is_valid_identifier_continuation_code_point(c));
+                    let slice = &self.source_manager[span];
+                    tokens.push(Token::new(TokenKind::CustomKeyword, span, slice));
+                    let dup = self.custom_keywords.iter().filter(|op| op.identifier.as_str() == std::str::from_utf8(slice).unwrap()).last();
+                    let is_invalid = dup.is_some();
+                    if is_invalid {
+                        let info = format!("The keyword '{}' is already defined", std::str::from_utf8(slice).unwrap());
+                        self.diagnostics.builder()
+                            .report(DiagnosticLevel::Error, "Redefinition of keyword is not allowed", self.source_manager.get_source_info(span), None)
+                            .add_error(info, Some(self.source_manager.fix_span(span)))
+                            .commit();
+                        if let Some(dup) = dup {
+                            self.diagnostics.builder()
+                                .report(DiagnosticLevel::Note, "Previous definition", self.source_manager.get_source_info(dup.span), None)
+                                .add_note(format!("The keyword '{}' is already defined", std::str::from_utf8(slice).unwrap()), Some(self.source_manager.fix_span(dup.span)))
+                                .commit();
+                        }
+                        continue;
+                    }
+                    let identifier = Identifier::new(std::str::from_utf8(slice).unwrap().to_string());
+                    self.custom_keywords.push(CustomIdentifier { identifier, span });
+                    keyword_found = true;
+                }
+                '(' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    self.paren_balance.push((TokenKind::OpenParen, span));
+                    tokens.push(Token::new(TokenKind::OpenParen, span, b"("));
+                    self.next_char();
+                }
+                ')' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    self.expect_block_or_paren(TokenKind::CloseParen);
+                    tokens.push(Token::new(TokenKind::CloseParen, span, b")"));
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+
+        if !keyword_found {
+            let info = self.source_manager.get_source_info(keyword_span);
+            self.diagnostics.builder()
+                .report(DiagnosticLevel::Error, format!("Expecting an identifier after 'keyword'"), info, None)
+                .commit();
+        }
+
         tokens
     }
 
