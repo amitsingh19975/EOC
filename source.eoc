@@ -1,5 +1,6 @@
-struct Int32;
+operator (-+-) {
+    precedence: 2,
+    type: .infix
+}
 
-operator i32;
-
-1i32;
+(1 -+- 2)
