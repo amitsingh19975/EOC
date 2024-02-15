@@ -1,0 +1,24 @@
+///////////////// Example 1 //////////////////////
+fn add(a: i32, b: i32) -> i32 { ... }
+
+///////////////// Example 2 //////////////////////
+fn greet("Welcome", name: String) { ... }
+fn greet(prefix: String, name: String) { ... }
+
+let hello1 = greet("Welcome", name: "Me"); // Ok
+let hello2 = greet("Hi", name: "Me"); // Ok
+
+///////////////// Example 3 //////////////////////
+comptime fn isArray(_: [_]) => true
+comptime fn isArray(_: _) => false
+
+comptime fn isArray = match (a: _) {
+    is [_] => true,
+    _ => false
+}
+
+///////////////// Example 4 //////////////////////
+
+@typefn
+fn typeToArrayType(ty: Type) => [ty]
+let a: typeToArrayType(i32) = []; // let a: [i32] = [];
