@@ -905,6 +905,15 @@ impl Lexer {
         let mut tokens: Vec<Token> = Vec::new();
         let mut operator_found = false;
 
+        let inside_triple_back_tick = self.paren_balance.iter().any(|(token, _)| token == &TokenKind::TripleBackTick);
+        if inside_triple_back_tick {
+            let info = self.source_manager.get_source_info(operator_span);
+            self.diagnostics.builder()
+                .report(DiagnosticLevel::Error, "Custom operator is not allowed inside code block", info, None)
+                .commit();
+            return tokens;
+        }
+
         loop {
             let ch = self.peek_char();
             if ch.is_none() {
@@ -984,6 +993,16 @@ impl Lexer {
     fn lex_custom_keyword(&mut self, keyword_span: Span) -> Vec<Token> {
         let mut tokens: Vec<Token> = Vec::new();
         let mut keyword_found = false;
+
+        let inside_triple_back_tick = self.paren_balance.iter().any(|(token, _)| token == &TokenKind::TripleBackTick);
+        if inside_triple_back_tick {
+            let info = self.source_manager.get_source_info(keyword_span);
+            self.diagnostics.builder()
+                .report(DiagnosticLevel::Error, "Custom keyword is not allowed inside code block", info, None)
+                .commit();
+            return tokens;
+        }
+
         loop {
             let ch = self.peek_char();
             if ch.is_none() {
