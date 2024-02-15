@@ -48,6 +48,7 @@ pub(crate) enum TokenKind {
     Dollar, // $
     KwKeyword, // keyword
     CustomKeyword, // custom keyword
+    CompileTime, // comptime
 
     // Punctuation
     OpenParen, // (
@@ -396,6 +397,18 @@ impl Token {
         self.kind == TokenKind::Match
     }
 
+    pub(crate) fn is_keyword_keyword(&self) -> bool {
+        self.kind == TokenKind::KwKeyword
+    }
+
+    pub(crate) fn is_custom_keyword(&self) -> bool {
+        self.kind == TokenKind::CustomKeyword
+    }
+
+    pub(crate) fn is_compile_time(&self) -> bool {
+        self.kind == TokenKind::CompileTime
+    }
+
     pub(crate) fn is_keyword(&self) -> bool {
         match self.kind {
             TokenKind::Let |
@@ -429,6 +442,7 @@ impl Token {
             TokenKind::Dollar |
             TokenKind::CustomKeyword |
             TokenKind::KwKeyword |
+            TokenKind::CompileTime |
             TokenKind::Ellipsis => true,
             _ => false,
         }
@@ -494,6 +508,7 @@ impl From<&[u8]> for TokenKind {
             b"inout" => TokenKind::InOut,
             b"$" => TokenKind::Dollar,
             b"keyword" => TokenKind::KwKeyword,
+            b"comptime" => TokenKind::CompileTime,
             _ => TokenKind::Identifier,
         }
     }
