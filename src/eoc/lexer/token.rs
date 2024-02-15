@@ -69,8 +69,7 @@ pub(crate) enum TokenKind {
     SingleQuote, // '
     DoubleQuote, // "
     Hash, // #
-    ReflectionStart, // ````
-    ReflectionEnd,   // ````
+    TripleBackTick, // ````
 
 
     // Comment, 
@@ -193,12 +192,8 @@ impl Token {
         self.kind == TokenKind::Operator
     }
 
-    pub(crate) fn is_reflection_start(&self) -> bool {
-        self.kind == TokenKind::ReflectionStart
-    }
-
-    pub(crate) fn is_reflection_end(&self) -> bool {
-        self.kind == TokenKind::ReflectionEnd
+    pub(crate) fn is_triple_back_tick(&self) -> bool {
+        self.kind == TokenKind::TripleBackTick
     }
 
     pub(crate) fn is_formatting_string_start(&self) -> bool {

@@ -108,14 +108,12 @@ impl ParenMatching {
             TokenKind::CloseBracket => Some(TokenKind::OpenBracket),
             TokenKind::OpenBrace => Some(TokenKind::CloseBrace),
             TokenKind::CloseBrace => Some(TokenKind::OpenBrace),
-            TokenKind::Backtick => Some(TokenKind::Backtick),
-            TokenKind::ReflectionStart => Some(TokenKind::ReflectionEnd),
-            TokenKind::ReflectionEnd => Some(TokenKind::ReflectionStart),
+            TokenKind::TripleBackTick => Some(TokenKind::TripleBackTick),
             _ => None,
         }
     }
 
-    pub(crate) fn is_reflection_block(source: &[u8], cursor: usize, reflection_start_code_points: &[u8]) -> bool {
+    pub(crate) fn is_triple_back_tick_block(source: &[u8], cursor: usize, reflection_start_code_points: &[u8]) -> bool {
         let start = cursor;
         let end = start + reflection_start_code_points.len();
         let slice = &source[start..end.min(source.len())];
@@ -134,9 +132,7 @@ impl ParenMatching {
             TokenKind::CloseBracket => "]",
             TokenKind::OpenBrace => "{",
             TokenKind::CloseBrace => "}",
-            TokenKind::Backtick => "`",
-            TokenKind::ReflectionStart => "```",
-            TokenKind::ReflectionEnd => "```",
+            TokenKind::TripleBackTick => "```",
             _ => "",
         }
     }
@@ -146,8 +142,7 @@ impl ParenMatching {
             TokenKind::OpenParen | TokenKind::CloseParen => "parentheses".to_owned(),
             TokenKind::OpenBracket | TokenKind::CloseBracket => "brackets".to_owned(),
             TokenKind::OpenBrace | TokenKind::CloseBrace => "braces".to_owned(),
-            TokenKind::Backtick => "backtick".to_owned(),
-            TokenKind::ReflectionStart | TokenKind::ReflectionEnd => "reflection block".to_owned(),
+            TokenKind::TripleBackTick => "code block".to_owned(),
             _ => "".to_owned(),
         }
     }

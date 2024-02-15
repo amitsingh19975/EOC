@@ -644,34 +644,41 @@ impl Lexer {
     }
 
     fn lex_back_tick(&mut self, tokens: &mut Vec<Token>) {
-        if ParenMatching::is_reflection_block(&self.source_manager.get_source(), self.cursor, b"```") {
+        if ParenMatching::is_triple_back_tick_block(&self.source_manager.get_source(), self.cursor, b"```") {
             let dummy = (TokenKind::Unknown, Span::from_usize(0, 0));
             let last = self.paren_balance.last().unwrap_or(&dummy);
             let span = Span::from_usize(self.cursor, self.cursor + 3);
             self.cursor += 3;
+            tokens.push(Token::new_with_repeat(TokenKind::TripleBackTick, span, b"`", 3));
 
             let (token, _) = last;
 
-            if token == &TokenKind::ReflectionStart {
-                self.expect_block_or_paren(TokenKind::ReflectionEnd);
-                tokens.push(Token::new_with_repeat(TokenKind::ReflectionEnd, span, b"`", 3));
+            let triple_back_tick_count = self.paren_balance.iter().filter(|(token, _)| token == &TokenKind::TripleBackTick).count();
+
+            if token == &TokenKind::TripleBackTick {
+                self.expect_block_or_paren(TokenKind::TripleBackTick);
             } else {
-                self.paren_balance.push((TokenKind::ReflectionStart, span));
-                tokens.push(Token::new_with_repeat(TokenKind::ReflectionStart, span, b"`", 3));
+                if triple_back_tick_count % 2 == 0 {
+                    self.paren_balance.push((TokenKind::TripleBackTick, span));
+                } else {
+                    let mut to_be_remove_index = -1;
+                    for (index, (token, _)) in self.paren_balance.iter().enumerate().rev() {
+                        if token == &TokenKind::TripleBackTick {
+                            to_be_remove_index = index as i32;
+                            break;
+                        }
+                    }
+
+                    if to_be_remove_index != -1 {
+                        self.paren_balance.remove(to_be_remove_index as usize);
+                    }
+                }
             }
 
         } else {
             let span = Span::from_usize(self.cursor, self.cursor + 1);
             tokens.push(Token::new(TokenKind::Backtick, span, b"`"));
             self.next_char();
-
-            if let Some(last) = self.paren_balance.last() {
-                if last.0 == TokenKind::Backtick {
-                    self.paren_balance.pop();
-                } else {
-                    self.paren_balance.push((TokenKind::Backtick, span));
-                }
-            }
         }
     }
 
