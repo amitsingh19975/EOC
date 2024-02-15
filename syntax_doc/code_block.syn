@@ -20,7 +20,8 @@ comptime fn derive_eq(sBlock: StructBlock, arg: Interface) -> Statement {
     ```;
 }
 
-comptime fn derive(sBlock: StructBlock, args: ...Interface) -> [Statement] {
+@define
+fn derive(sBlock: StructBlock, args: ...Interface) -> [Statement] {
     var res: [Statement] = [];
     res.push(sBlock);
     for arg in args {
