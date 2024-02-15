@@ -1,0 +1,54 @@
+interface Eq {
+    fn eq(in self, other: in Self) -> bool;
+}
+
+comptime fn derive_eq(sBlock: StructBlock, arg: Interface) -> Statement {
+    return ```
+        extension {{sBlock.name}}: Eq {
+            fn eq(in self, other: in Self) -> bool {
+                var res = false;
+                {{
+                    for field in sBlock.fields {
+                        ```
+                            res = res && ( self.{{field.name}}.eq(other.{{field.name}}) );
+                        ```
+                    }
+                }}
+                return res;
+            }
+        }
+    ```;
+}
+
+comptime fn derive(sBlock: StructBlock, args: ...Interface) -> [Statement] {
+    var res: [Statement] = [];
+    res.push(sBlock);
+    for arg in args {
+        if arg.name == "Eq" {
+            res.push(derive_eq(sBlock, arg))
+        }
+    }
+    return res;
+}
+
+@derive(Eq)
+struct Point {
+    a: i32,
+    b: i32
+}
+
+
+///////////////////////////////////// Output Start /////////////////////////////////////
+struct Point {
+    x: i32,
+    y: i32
+}
+
+extension Point: Eq {
+    fn eq(in self, other: in Self) -> bool {
+        var res = false;
+        res = res && (self.x.eq(other.x));res = res && (self.y.eq(other.y));
+        return res;
+    }
+}
+///////////////////////////////////// Output End   /////////////////////////////////////
