@@ -20,7 +20,7 @@ comptime fn isArray = match (a: _) {
 ///////////////// Example 4 //////////////////////
 
 fn.type typeToArrayType(ty: Type) => [ty]
-            OR 
+//                 OR 
 fn typeToArrayType($T) => [T]
 
 let a: typeToArrayType(i32) = []; // let a: [i32] = [];
@@ -28,5 +28,12 @@ let a: typeToArrayType(i32) = []; // let a: [i32] = [];
 ///////////////// Example 5 //////////////////////
 fn.pure sin(a: f32) -> f32 {...}
 
+//          Or
+
+fn sin(a: f32) -> f32 { [] in ... } // empty capture group
+
 ///////////////// Example 6 //////////////////////
 fn.pure sin(a: f32.range(0..=1)) -> f32 {...}
+
+///////////////// Example 7 //////////////////////
+fn add(a: i32, comptime b: i32) -> i32 { ... } // 'b' have to be known at compile-time.
