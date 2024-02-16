@@ -1,10 +1,10 @@
 keyword defer {
     requires: [.parentBlock]
-    (self, $block:block) => {[parentBlock: Block] in
+    (self, $block:block) => {(parentBlock: Block) in
         parentBlock.atExit.push($block)
     }
     
-    (self, $expr:expr) => {[parentBlock: Block] in
+    (self, $expr:expr) => {(parentBlock: Block) in
         parentBlock.atExit.push($expr)
     }
 }
