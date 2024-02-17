@@ -168,6 +168,23 @@ impl Lexer {
             return false;
         }
 
+        let temp = self.cursor;
+        
+        while let Some(ch) = self.peek_char() {
+            match ch {
+                'e' | 'E' | '.' | 'p' | 'P' => {
+                    self.cursor = temp;
+                    return false;
+                }
+                ch if ch.is_whitespace() => break,
+                _ => {
+                    self.next_char();
+                }
+            }
+        }
+
+        self.cursor = temp;
+
         let ch = self.peek_char();
         if ch.is_none() {
             return false;
@@ -181,54 +198,65 @@ impl Lexer {
             return false;
         }
 
+        let is_start_with_zero = ch == '0';
+
         let start = self.cursor;
         self.next_char();
 
-        if self.peek_char() == Some('x') {
-            self.next_char();
-            let span = self.skip_while(|c| c.is_ascii_hexdigit() || c == '_');
-            if self.peek_char() == Some('.') {
-                self.cursor = start;
-                return false;
+        if is_start_with_zero {
+            if self.peek_char() == Some('x') {
+                self.next_char();
+                let span = self.skip_while(|c| c.is_ascii_hexdigit() || c == '_');
+                if self.peek_char() == Some('.') {
+                    self.cursor = start;
+                    return false;
+                }
+    
+                let span = Span::from_usize(start, span.end as usize);
+                let slice: Vec<u8> = self.source_manager[span].iter().filter(|c| **c != b'_').map(|c| *c).collect();
+                tokens.push(Token::new(TokenKind::Integer, span, slice));
+                return true;
+            }
+            
+            if self.peek_char() == Some('o') {
+                self.next_char();
+                let span = self.skip_while(|c| c.is_ascii_digit() || c == '_');
+                let span = Span::from_usize(start, span.end as usize);
+                let slice: Vec<u8> = self.source_manager[span].iter().filter(|c| **c != b'_').map(|c| *c).collect();
+                for (index, byte) in slice.iter().enumerate() {
+                    if *byte > b'7' {
+                        let start = span.start as usize + 2 + 1;
+                        let span = Span::from_usize(start + index, start + index + 1);
+                        let info = self.source_manager.get_source_info(span);
+                        self.diagnostics.builder()
+                            .report(DiagnosticLevel::Error, "Invalid octal digit", info, None)
+                            .add_error("Octal digit must be between 0 and 7", Some(self.source_manager.fix_span(span)))
+                            .commit();
+                        return true;
+                    }
+                }
+                tokens.push(Token::new(TokenKind::Integer, span, slice));
+                return true;
             }
 
-            let span = Span::from_usize(start, span.end as usize);
-            let slice: Vec<u8> = self.source_manager[span].iter().filter(|c| **c != b'_').map(|c| *c).collect();
-            tokens.push(Token::new(TokenKind::Integer, span, slice));
-        } else if self.peek_char() == Some('o') {
-            self.next_char();
-            let span = self.skip_while(|c| c.is_ascii_digit() || c == '_');
-            let span = Span::from_usize(start, span.end as usize);
-            let slice: Vec<u8> = self.source_manager[span].iter().filter(|c| **c != b'_').map(|c| *c).collect();
-            for (index, byte) in slice.iter().enumerate() {
-                if *byte > b'7' {
-                    let start = span.start as usize + 2 + 1;
-                    let span = Span::from_usize(start + index, start + index + 1);
-                    let info = self.source_manager.get_source_info(span);
-                    self.diagnostics.builder()
-                        .report(DiagnosticLevel::Error, "Invalid octal digit", info, None)
-                        .add_error("Octal digit must be between 0 and 7", Some(self.source_manager.fix_span(span)))
-                        .commit();
-                    return true;
-                }
+            if self.peek_char() == Some('b') {
+                self.next_char();
+                let span = self.skip_while(|c| c == '0' || c == '1' || c == '_');
+                let span = Span::from_usize(start, span.end as usize);
+                let slice: Vec<u8> = self.source_manager[span].iter().filter(|c| **c != b'_').map(|c| *c).collect();
+                tokens.push(Token::new(TokenKind::Integer, span, slice));
+                return true;
             }
-            tokens.push(Token::new(TokenKind::Integer, span, slice));
-        } else if self.peek_char() == Some('b') {
-            self.next_char();
-            let span = self.skip_while(|c| c == '0' || c == '1' || c == '_');
-            let span = Span::from_usize(start, span.end as usize);
-            let slice: Vec<u8> = self.source_manager[span].iter().filter(|c| **c != b'_').map(|c| *c).collect();
-            tokens.push(Token::new(TokenKind::Integer, span, slice));
-        } else {
-            let span = self.skip_while(|c| c.is_ascii_digit() || c == '_');
-            if self.peek_char() == Some('.') {
-                self.cursor = start;
-                return false;
-            }
-            let span = Span::from_usize(start, span.end as usize);
-            let slice: Vec<u8> = self.source_manager[span].iter().filter(|c| **c != b'_').map(|c| *c).collect();
-            tokens.push(Token::new(TokenKind::Integer, span, slice));
         }
+
+        let span = self.skip_while(|c| c.is_ascii_digit() || c == '_');
+        if self.peek_char() == Some('.') {
+            self.cursor = start;
+            return false;
+        }
+        let span = Span::from_usize(start, span.end as usize);
+        let slice: Vec<u8> = self.source_manager[span].iter().filter(|c| **c != b'_').map(|c| *c).collect();
+        tokens.push(Token::new(TokenKind::Integer, span, slice));
         
         return true;
     }
@@ -252,10 +280,11 @@ impl Lexer {
             return false;
         }
 
+        let is_start_with_zero = ch == '0';
         let start = self.cursor;
         self.next_char();
 
-        if ch == '0' && self.peek_char() == Some('x') {
+        if is_start_with_zero && self.peek_char() == Some('x') {
             self.next_char();
             let span = self.skip_while(|c| c.is_ascii_hexdigit() || c == '_');
             let mut span = Span::from_usize(start, span.end as usize);
@@ -349,10 +378,12 @@ impl Lexer {
     }
 
     fn lex_number(&mut self, tokens: &mut Vec<Token>) {
+        let start = self.cursor;
         if self.lex_integer(tokens) {
             return;
         }
 
+        self.cursor = start;
         self.lex_floating_point(tokens);
     }
 
