@@ -1,0 +1,29 @@
+////////////////////////////////// Value Enum ////////////////////////////////
+enum Direction {
+    north,
+    south,
+    east,
+    west
+}
+
+var dir: Direction = .north;
+dir = .east;
+
+
+enum Error: String {
+    notFound = "File not found",
+    notAFile = "Not a file"
+}
+
+////////////////////////////////// End Value Enum /////////////////////////////
+
+/////////////////////////// Union Style Enum /////////////////////////////////
+
+enum Node {
+    left(Box<Node>)
+    right(Box<Node>)
+    value { x: f32, y: f32 }
+    isLeaf(bool)
+}
+
+/////////////////////////// End Union Style Enum /////////////////////////////////
