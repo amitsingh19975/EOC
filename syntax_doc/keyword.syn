@@ -1,12 +1,10 @@
 keyword defer {
-    input: [.parentBlock]
-    
-    (self, block: Block) => {(parentBlock: Block) in
-        parentBlock.atExit.push(block)
+    (self, block: Block) => {(context: ASTContext) in
+        context.parentBlock.atExit.push(block)
     }
     
-    (self, expr: Expr) => {(parentBlock: Block) in
-        parentBlock.atExit.push(expr)
+    (self, expr: Expr) => {(context: ASTContext) in
+        context.parentBlock.atExit.push(expr)
     }
 }
 
