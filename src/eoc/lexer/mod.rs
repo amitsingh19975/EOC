@@ -357,7 +357,7 @@ impl Lexer {
     }
 
     fn lex_formatting_string(&mut self) -> Vec<Token> {
-        self.lex_helper(vec!['}']).0
+        self.lex_helper(vec!['}'], false).0
     }
 
     fn lex_double_quoted_string(&mut self, tokens: &mut Vec<Token>) {
@@ -370,18 +370,19 @@ impl Lexer {
 
         tokens.push(Token::new(TokenKind::StartFormattingString, Span::from_usize(self.cursor, self.cursor + 1), b"\""));
 
+        let start_quote_span = Span::from_usize(self.cursor, self.cursor + 1);
+
         self.next_char();
         let mut start = self.cursor;
         let mut end = self.cursor;
         
-
         loop {
             let ch = self.peek_char();
             if ch.is_none() {
-                let info = self.source_manager.get_source_info(Span::from_usize(start, end));
+                let info = self.source_manager.get_source_info(start_quote_span);
                 self.diagnostics.builder()
                     .report(DiagnosticLevel::Error, "Unterminated string", info, None)
-                    .add_error("Unterminated string", Some(self.source_manager.fix_span(Span::from_usize(start, end))))
+                    .add_error("Unterminated string", Some(self.source_manager.fix_span(start_quote_span)))
                     .commit();
                 break;
             }
@@ -398,11 +399,42 @@ impl Lexer {
                     self.next_char();
                     continue;
                 }
+                let old_parens = self.paren_balance.clone();
+                self.paren_balance.clear();
+                self.paren_balance.push((TokenKind::OpenBrace, Span::from_usize(end, end + 1)));
+                let mut has_error = false;
 
-                tokens.push(Token::new(TokenKind::String, Span::from_usize(start, end), &self.source_manager[Span::from_usize(start, end)]));
-                let format_tokens = self.lex_formatting_string();
-                tokens.extend(format_tokens);
+                {
+                    let span = Span::from_usize(start, end);
+                    tokens.push(Token::new(TokenKind::String, span, &self.source_manager[span]));
+                    let format_tokens = self.lex_formatting_string();
+
+                    if self.peek_char() != Some('}') {
+                        let last_seen_quote = format_tokens.iter().rev().find(|token| token.kind == TokenKind::StartFormattingString);
+                        if let Some((TokenKind::StartFormattingString, q_span)) = last_seen_quote.map(|token| (token.kind, token.span)) {
+                            let info = self.source_manager.get_source_info(q_span);
+                            self.diagnostics.builder()
+                                .report(DiagnosticLevel::Error, "Missing matching '}'", info, None)
+                                .add_info("Add '}' before this '\"'", Some(self.source_manager.fix_span(q_span)))
+                                .commit();
+                            has_error = true;
+                        } else {
+                            let info = self.source_manager.get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
+                            self.diagnostics.builder()
+                                .report(DiagnosticLevel::Error, "Missing matching '}'", info, None)
+                                .commit();
+                        }
+                    } else {
+                        self.next_char();
+                    }
+                    tokens.extend(format_tokens);
+                    self.expect_block_or_paren(TokenKind::CloseBrace);
+                }
+                self.paren_balance = old_parens;
                 start = self.cursor;
+                if has_error {
+                    break;
+                }
                 continue;
             }
 
@@ -413,7 +445,6 @@ impl Lexer {
 
             if ch == '"' && !is_escaping {
                 end = self.cursor;
-                self.next_char();
                 break;
             }
 
@@ -443,9 +474,13 @@ impl Lexer {
         }
 
         let span = Span::from_usize(start, end);
+        if start_quote_span == span || self.peek_char() != Some('"') {
+            return;
+        }
         let slice = &self.source_manager[span];
         tokens.push(Token::new(TokenKind::String, span, slice));
         tokens.push(Token::new(TokenKind::EndFormattingString, Span::from_usize(self.cursor, self.cursor + 1), b"\""));
+        self.next_char();
 
     }
 
@@ -716,7 +751,7 @@ impl Lexer {
         }
     }
     
-    fn lex_helper(&mut self, until: Vec<char>) -> (Vec<Token>, &Diagnostic) {
+    fn lex_helper(&mut self, until: Vec<char>, should_check_paren: bool) -> (Vec<Token>, &Diagnostic) {
         let mut tokens = Vec::new();
         loop {
             let ch = self.peek_char();
@@ -853,7 +888,10 @@ impl Lexer {
             }
         }
 
-        self.check_balanced_paren(&until);
+        if should_check_paren {
+            self.check_balanced_paren(&until);
+        }
+
         (tokens, &self.diagnostics)
     }
 
@@ -1074,7 +1112,7 @@ impl Lexer {
 
     pub fn lex(&mut self) -> (Vec<Token>, &Diagnostic) {
         let cursor = self.cursor;
-        let (mut tokens, diag) = self.lex_helper(Vec::new());
+        let (mut tokens, diag) = self.lex_helper(Vec::new(), false);
         let mut i = 0;
         for t in tokens.iter().rev() {
             if t.is_eof() {
