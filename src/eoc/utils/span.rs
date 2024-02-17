@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use super::filesystem::MappedFile;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
