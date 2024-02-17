@@ -1,10 +1,27 @@
 keyword defer {
-    requires: [.parentBlock]
-    (self, $block:block) => {(parentBlock: Block) in
-        parentBlock.atExit.push($block)
+    input: [.parentBlock]
+    
+    (self, block: Block) => {(parentBlock: Block) in
+        parentBlock.atExit.push(block)
     }
     
-    (self, $expr:expr) => {(parentBlock: Block) in
-        parentBlock.atExit.push($expr)
+    (self, expr: Expr) => {(parentBlock: Block) in
+        parentBlock.atExit.push(expr)
     }
 }
+
+///////////////////////////////// Example /////////////////////////////////////
+
+fn main() {
+    let (a, b) = (3, 4);
+    defer println("{a + b = }")
+    defer {
+        println("End")
+    }
+}
+
+// output:
+> a + b = 7
+> End
+
+///////////////////////////////// End Example /////////////////////////////////
