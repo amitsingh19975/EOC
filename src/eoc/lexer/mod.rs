@@ -1,6 +1,6 @@
 use std::{path::Path, vec};
 use self::{token::{Token, TokenKind}, utils::{is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point, ParenMatching}};
-use super::{ast::identifier::Identifier, utils::{diagnostic::{Diagnostic, DiagnosticLevel, DiagnosticReporter}, source_manager::SourceManager, span::{self, Span}}};
+use super::{ast::identifier::Identifier, utils::{diagnostic::{Diagnostic, DiagnosticLevel, DiagnosticReporter}, source_manager::SourceManager, span::Span}};
 pub(crate) mod token;
 pub(crate) mod utils;
 
