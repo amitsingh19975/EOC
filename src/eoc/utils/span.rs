@@ -20,6 +20,9 @@ impl Span {
     }
 
     pub(crate) fn len(&self) -> usize {
+        if (self.end as i64 - self.start as i64) < 0 {
+            return 0;
+        }
         (self.end - self.start) as usize
     }
 
@@ -51,7 +54,9 @@ impl MappedFile {
     pub(crate) fn get_subspan(&self, span: Span) -> &[u8] {
         let start = span.start as usize;
         let end = span.end as usize;
-        assert!(start <= end, "Invalid span");
+        if (end as i64 - start as i64) <= 0 {
+            return &[];
+        }
         assert!(end <= self.len(), "Span out of range");
         &self.as_slice()[start..end]
     }
