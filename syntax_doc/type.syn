@@ -1,0 +1,54 @@
+/////////////////////////// Type Keyword ////////////////////////////
+type Vec = [f32]; // creates a unique type for dynamic array
+typealias Matrix = [f32; _; _] // creates an alias for 2d array
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////// Literal ////////////////////////////
+type Up = "Up";
+type Zero = 0;
+////////////////////////////////////////////////////////////////
+
+/////////////////////////// Union Types ////////////////////////////
+struct ExprNode {...}
+struct IntegerNode {...}
+
+type Node = ExprNode | IntegerNode;
+
+type Direction = "Up" | "Left" | "Down" | "Right";
+////////////////////////////////////////////////////////////////
+
+/////////////////////////// Static Array Types ////////////////////////////
+
+type 3DVector = [f32;3]
+type Mat3x3 = [f32;3;3]
+type Tensor = [f32; 10; 10; 5; 5; 2]
+
+let image: [RGB; 100; 100] = [.red]; // set red color to whole 2d array;
+let image: [RGB; 2; 2] = [.red, .red; .green, .green]; // the first column contains red color and the second one has green
+
+////////////////////////////////////////////////////////////////////
+
+/////////////////////////// Dynamic Array Types ////////////////////////////
+
+type NDVector = [f32;_]
+type Matrix = [f32;_;_]
+type Tensor = [f32; _; _; _; _; _]
+
+var image: Matrix = [_; n; m]; // constructing 2d array with (n x m) dimensions
+let image: Matrix = [1., 2.; 3., 4.]; // initialing 2d array with (2x2) array
+
+////////////////////////////////////////////////////////////////////
+
+/////////////////////////// Map Types ////////////////////////////
+
+type ValueToText = [i32 -> String]
+
+let map: ValueToText = [
+    1: "One",
+    2: "Two"
+]
+
+var map: ValueToText = [:]
+
+////////////////////////////////////////////////////////////////////
