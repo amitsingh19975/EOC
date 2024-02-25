@@ -7,6 +7,120 @@ use super::source_manager::SourceManagerDiagnosticInfo;
 use super::span::Span;
 use colored::Colorize;
 
+fn is_redirecting() -> bool {
+    !atty::is(atty::Stream::Stderr) || !atty::is(atty::Stream::Stdout)
+}
+
+trait ColorExt {
+    fn bold_ext(&self, is_redirecting: bool) -> String;
+    fn red_ext(&self, is_redirecting: bool) -> String;
+    fn yellow_ext(&self, is_redirecting: bool) -> String;
+    fn blue_ext(&self, is_redirecting: bool) -> String;
+    fn cyan_ext(&self, is_redirecting: bool) -> String;
+    fn magenta_ext(&self, is_redirecting: bool) -> String;
+}
+
+impl ColorExt for String {
+    fn bold_ext(&self, is_redirecting: bool) -> String {
+        if is_redirecting {
+            self.to_string()
+        } else {
+            self.bold().to_string()
+        }
+    }
+
+    fn red_ext(&self, is_redirecting: bool) -> String {
+        if is_redirecting {
+            self.to_string()
+        } else {
+            self.red().to_string()
+        }
+    }
+
+    fn yellow_ext(&self, is_redirecting: bool) -> String {
+        if is_redirecting {
+            self.to_string()
+        } else {
+            self.yellow().to_string()
+        }
+    }
+
+    fn blue_ext(&self, is_redirecting: bool) -> String {
+        if is_redirecting {
+            self.to_string()
+        } else {
+            self.blue().to_string()
+        }
+    }
+
+    fn cyan_ext(&self, is_redirecting: bool) -> String {
+        if is_redirecting {
+            self.to_string()
+        } else {
+            self.cyan().to_string()
+        }
+    }
+
+    fn magenta_ext(&self, is_redirecting: bool) -> String {
+        if is_redirecting {
+            self.to_string()
+        } else {
+            self.magenta().to_string()
+        }
+    }
+}
+
+impl ColorExt for &str {
+    fn bold_ext(&self, is_redirecting: bool) -> String {
+        if is_redirecting {
+            self.to_string()
+        } else {
+            self.bold().to_string()
+        }
+    }
+
+    fn red_ext(&self, is_redirecting: bool) -> String {
+        if is_redirecting {
+            self.to_string()
+        } else {
+            self.red().to_string()
+        }
+    }
+
+    fn yellow_ext(&self, is_redirecting: bool) -> String {
+        if is_redirecting {
+            self.to_string()
+        } else {
+            self.yellow().to_string()
+        }
+    }
+
+    fn blue_ext(&self, is_redirecting: bool) -> String {
+        if is_redirecting {
+            self.to_string()
+        } else {
+            self.blue().to_string()
+        }
+    }
+
+    fn cyan_ext(&self, is_redirecting: bool) -> String {
+        if is_redirecting {
+            self.to_string()
+        } else {
+            self.cyan().to_string()
+        }
+    }
+
+    fn magenta_ext(&self, is_redirecting: bool) -> String {
+        if is_redirecting {
+            self.to_string()
+        } else {
+            self.magenta().to_string()
+        }
+    }
+
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DiagnosticLevel {
     Error,
@@ -15,39 +129,39 @@ pub enum DiagnosticLevel {
     Note,
 }
 
-impl Display for DiagnosticLevel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl DiagnosticLevel {
+    pub fn to_string(&self, is_redirecting: bool) -> String {
         match self {
-            DiagnosticLevel::Error => write!(f, "{}", "error".red()),
-            DiagnosticLevel::Warning => write!(f, "{}", "warning".yellow()),
-            DiagnosticLevel::Info => write!(f, "{}", "info".blue()),
-            DiagnosticLevel::Note => write!(f, "{}", "note".cyan()),
+            DiagnosticLevel::Error => "error".red_ext(is_redirecting),
+            DiagnosticLevel::Warning => "warning".yellow_ext(is_redirecting),
+            DiagnosticLevel::Info => "info".blue_ext(is_redirecting),
+            DiagnosticLevel::Note => "note".cyan_ext(is_redirecting),
         }
     }
 }
 
 trait DiagnosticLevelExt {
-    fn colorize(&self, level: DiagnosticLevel) -> String;
+    fn colorize(&self, level: DiagnosticLevel, is_redirecting: bool) -> String;
 }
 
 impl DiagnosticLevelExt for String {
-    fn colorize(&self, level: DiagnosticLevel) -> String {
+    fn colorize(&self, level: DiagnosticLevel, is_redirecting: bool) -> String {
         match level {
-            DiagnosticLevel::Error => self.red().to_string(),
-            DiagnosticLevel::Warning => self.yellow().to_string(),
-            DiagnosticLevel::Info => self.blue().to_string(),
-            DiagnosticLevel::Note => self.cyan().to_string(),
+            DiagnosticLevel::Error => self.red_ext(is_redirecting),
+            DiagnosticLevel::Warning => self.yellow_ext(is_redirecting),
+            DiagnosticLevel::Info => self.blue_ext(is_redirecting),
+            DiagnosticLevel::Note => self.cyan_ext(is_redirecting),
         }
     }
 }
 
 impl DiagnosticLevelExt for &str {
-    fn colorize(&self, level: DiagnosticLevel) -> String {
+    fn colorize(&self, level: DiagnosticLevel, is_redirecting: bool) -> String {
         match level {
-            DiagnosticLevel::Error => self.red().to_string(),
-            DiagnosticLevel::Warning => self.yellow().to_string(),
-            DiagnosticLevel::Info => self.blue().to_string(),
-            DiagnosticLevel::Note => self.cyan().to_string(),
+            DiagnosticLevel::Error => self.red_ext(is_redirecting),
+            DiagnosticLevel::Warning => self.yellow_ext(is_redirecting),
+            DiagnosticLevel::Info => self.blue_ext(is_redirecting),
+            DiagnosticLevel::Note => self.cyan_ext(is_redirecting),
         }
     }
 }
@@ -75,24 +189,25 @@ pub struct DiagnosticBase {
 
 macro_rules! print_message_fn {
     ($fn_name:ident, $W:ty, $R:ty) => {
-        fn $fn_name(base: &DiagnosticBase, filepath: &Path, f: &mut $W) -> $R {
+        fn $fn_name(base: &DiagnosticBase, filepath: &Path, f: &mut $W, is_redirecting: bool) -> $R {
+            println!("is_redirecting: {}", is_redirecting);
             for message in base.messages.iter().filter(|m| m.span.is_none()) {
-                writeln!(f, "{}: {}", message.level.to_string().bold(), message.message.bold())?;
+                writeln!(f, "{}: {}", message.level.to_string(is_redirecting).bold_ext(is_redirecting), message.message.bold_ext(is_redirecting))?;
             }
 
             let line_number = format!("{}", base.source_info.line);
             let line_number_width = line_number.len() + 2;
-            let line_number = line_number.bold().magenta();
+            let line_number = line_number.bold_ext(is_redirecting).magenta_ext(is_redirecting);
     
-            writeln!(f, "{}{}:{}:{}", "  --> ".magenta(), filepath.display(), base.source_info.line, base.source_info.column + 1)?;
-            writeln!(f, "{:width$}{}", ' ', "|".magenta(), width=line_number_width)?;
+            writeln!(f, "{}{}:{}:{}", "  --> ".magenta_ext(is_redirecting), filepath.display(), base.source_info.line, base.source_info.column + 1)?;
+            writeln!(f, "{:width$}{}", ' ', "|".magenta_ext(is_redirecting), width=line_number_width)?;
             
-            writeln!(f, " {} {} {}", line_number, "|".magenta(), base.source_info.source.trim_end())?;
+            writeln!(f, " {} {} {}", line_number, "|".magenta_ext(is_redirecting), base.source_info.source.trim_end())?;
     
             let suggestions = DiagnosticBase::resolve_underline(base.messages.iter().filter(|m| m.span.is_some()).collect::<Vec<_>>());
     
             if !suggestions.is_empty() {
-                write!(f, "{:width$}{}", ' ', "|".magenta(), width=line_number_width)?;
+                write!(f, "{:width$}{}", ' ', "|".magenta_ext(is_redirecting), width=line_number_width)?;
             }
     
             {
@@ -101,7 +216,7 @@ macro_rules! print_message_fn {
                     let diff = ((span.start - last_span) as isize - 1).max(0) as usize; 
                     // println!("diff: {} | {:#?}", diff, span);
                     write!(f, " {}", " ".repeat(diff))?;
-                    write!(f, "{}", "^".repeat(span.len()).colorize(message.level))?;
+                    write!(f, "{}", "^".repeat(span.len()).colorize(message.level, is_redirecting))?;
                     last_span = span.end;
                 }
             }
@@ -109,12 +224,12 @@ macro_rules! print_message_fn {
             for (depth, (message, span)) in suggestions.iter().rev().enumerate() {
                 let len = span.len();
                 for _ in 0..depth {
-                    write!(f, "{:width$}{}{}{}", ' ', "|".magenta(), " ".repeat(len), "|".colorize(message.level), width=line_number_width)?;
+                    write!(f, "{:width$}{}{}{}", ' ', "|".magenta_ext(is_redirecting), " ".repeat(len), "|".colorize(message.level, is_redirecting), width=line_number_width)?;
                 }
                 if depth == 0 {
-                    writeln!(f, " {}", message.message.colorize(message.level))?;
+                    writeln!(f, " {}", message.message.colorize(message.level, is_redirecting))?;
                 } else {
-                    writeln!(f, "\n{:width$}{}{}{}", ' ', "|".magenta(), " ".repeat(len), message.message.colorize(message.level), width=line_number_width)?;
+                    writeln!(f, "\n{:width$}{}{}{}", ' ', "|".magenta_ext(is_redirecting), " ".repeat(len), message.message.colorize(message.level, is_redirecting), width=line_number_width)?;
                 }
             }
     
@@ -122,7 +237,7 @@ macro_rules! print_message_fn {
                 return Ok(());
             }
             
-            writeln!(f, "{:width$}{} {}", ' ', "= note:".magenta(), base.notes[0].message, width=line_number_width)?;
+            writeln!(f, "{:width$}{} {}", ' ', "= note:".magenta_ext(is_redirecting), base.notes[0].message, width=line_number_width)?;
     
             for message in base.notes.iter().skip(1) {
                 writeln!(f,  "          {}", message.message)?;
@@ -294,7 +409,7 @@ impl DiagnosticReporter for DiagnosticBag {
 impl Display for DiagnosticBag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for message in self.iter() {
-            print_message_fmt(message, self.get_filepath(), f)?;
+            print_message_fmt(message, self.get_filepath(), f, is_redirecting())?;
         }
         Ok(())
     }
@@ -325,7 +440,7 @@ impl DiagnosticReporter for StreamingDiagnosticBag {
         self.has_error = message.has_error;
         let path = self.get_filepath().to_path_buf();
         let mut writer = &mut self.writer;
-        print_message_io(&message, &path, &mut writer).unwrap();
+        print_message_io(&message, &path, &mut writer, is_redirecting()).unwrap();
     }
 
     fn get_filepath(&self) -> &Path {
@@ -352,7 +467,7 @@ pub enum Diagnostic {
 impl Display for StreamingDiagnosticBag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for message in self.iter() {
-            print_message_fmt(message, self.get_filepath(), f)?;
+            print_message_fmt(message, self.get_filepath(), f, is_redirecting())?;
         }
         Ok(())
     }

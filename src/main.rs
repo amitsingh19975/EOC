@@ -5,7 +5,7 @@ use crate::eoc::utils::diagnostic::StreamingDiagnosticBag;
 
 fn main() -> Result<()> {
     let filepath = Path::new("source.eoc");
-    let diagnostic = StreamingDiagnosticBag::new(Box::new(std::io::stdout()), filepath);
+    let diagnostic = StreamingDiagnosticBag::new(Box::new(std::io::stderr()), filepath);
     let mut lexer = eoc::lexer::Lexer::new_from_filepath(filepath, diagnostic)?;
     let (tokens, diagnostics) = lexer.lex();
     tokens.iter().for_each(|token| println!("{}", token));
