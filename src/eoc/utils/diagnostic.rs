@@ -1,8 +1,10 @@
+#![allow(dead_code)]
+
 use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 
 use super::source_manager::SourceManagerDiagnosticInfo;
-use super::span::{self, Span};
+use super::span::Span;
 use colored::Colorize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

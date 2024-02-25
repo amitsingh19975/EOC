@@ -1,4 +1,6 @@
-use std::{ops::{Index, RangeBounds, RangeFrom}, path::{Path, PathBuf}};
+#![allow(dead_code)]
+
+use std::{ops::{Index, RangeFrom}, path::{Path, PathBuf}};
 use crate::eoc::lexer::utils::valid_utf8_character_with_char_len;
 
 use super::{filesystem::MappedFile, span::Span};
