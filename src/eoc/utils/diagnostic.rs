@@ -190,7 +190,6 @@ pub struct DiagnosticBase {
 macro_rules! print_message_fn {
     ($fn_name:ident, $W:ty, $R:ty) => {
         fn $fn_name(base: &DiagnosticBase, filepath: &Path, f: &mut $W, is_redirecting: bool) -> $R {
-            println!("is_redirecting: {}", is_redirecting);
             for message in base.messages.iter().filter(|m| m.span.is_none()) {
                 writeln!(f, "{}: {}", message.level.to_string(is_redirecting).bold_ext(is_redirecting), message.message.bold_ext(is_redirecting))?;
             }

@@ -106,6 +106,8 @@ impl ParenMatching {
             TokenKind::CloseParen => Some(TokenKind::OpenParen),
             TokenKind::OpenBracket => Some(TokenKind::CloseBracket),
             TokenKind::CloseBracket => Some(TokenKind::OpenBracket),
+            TokenKind::OpenDoubleBrace => Some(TokenKind::CloseDoubleBrace),
+            TokenKind::CloseDoubleBrace => Some(TokenKind::OpenDoubleBrace),
             TokenKind::OpenBrace => Some(TokenKind::CloseBrace),
             TokenKind::CloseBrace => Some(TokenKind::OpenBrace),
             TokenKind::TripleBackTick => Some(TokenKind::TripleBackTick),
@@ -128,6 +130,8 @@ impl ParenMatching {
         match t {
             TokenKind::OpenParen => "(",
             TokenKind::CloseParen => ")",
+            TokenKind::OpenDoubleBrace => "{{",
+            TokenKind::CloseDoubleBrace => "}}",
             TokenKind::OpenBracket => "[",
             TokenKind::CloseBracket => "]",
             TokenKind::OpenBrace => "{",
@@ -141,6 +145,7 @@ impl ParenMatching {
         match t {
             TokenKind::OpenParen | TokenKind::CloseParen => "parentheses".to_owned(),
             TokenKind::OpenBracket | TokenKind::CloseBracket => "brackets".to_owned(),
+            TokenKind::OpenDoubleBrace | TokenKind::CloseDoubleBrace => "double braces".to_owned(),
             TokenKind::OpenBrace | TokenKind::CloseBrace => "braces".to_owned(),
             TokenKind::TripleBackTick => "code block".to_owned(),
             _ => "".to_owned(),

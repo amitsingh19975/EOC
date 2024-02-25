@@ -55,6 +55,8 @@ pub(crate) enum TokenKind {
     CloseParen, // )
     OpenBrace, // {
     CloseBrace, // }
+    OpenDoubleBrace, // {{
+    CloseDoubleBrace, // }}
     OpenBracket, // [
     CloseBracket, // ]
     Comma, // ,
