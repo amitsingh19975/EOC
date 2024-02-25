@@ -109,7 +109,7 @@ impl Token {
         }
     }
 
-    pub(crate) fn repeat(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.span.len()
     }
 
@@ -461,7 +461,7 @@ impl Token {
     }
 
     pub(crate) fn to_string(&self, source_manager: &SourceManager) -> String {
-        format!("Token({:?}, '{}', {:?}, repeat={})", self.kind, self.as_str(source_manager), self.span, self.repeat())
+        format!("Token({:?}, '{}', {:?}, len={})", self.kind, self.as_str(source_manager), self.span, self.len())
     }
 }
 
