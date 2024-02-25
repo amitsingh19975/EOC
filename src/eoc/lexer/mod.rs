@@ -459,7 +459,7 @@ impl Lexer {
                         self.next_char();
                     }
                     tokens.extend(format_tokens);
-                    self.expect_block_or_paren(TokenKind::CloseBrace);
+                    self.expect_block_or_paren(TokenKind::CloseBrace, 1);
                 }
                 self.paren_balance = old_parens;
                 start = self.cursor;
@@ -722,13 +722,16 @@ impl Lexer {
             let triple_back_tick_count = self.paren_balance.iter().filter(|(token, _)| token == &TokenKind::TripleBackTick).count();
 
             if token == &TokenKind::TripleBackTick {
-                self.expect_block_or_paren(TokenKind::TripleBackTick);
+                self.expect_block_or_paren(TokenKind::TripleBackTick, 3);
             } else {
                 if triple_back_tick_count % 2 == 0 {
                     self.paren_balance.push((TokenKind::TripleBackTick, span));
                 } else {
                     let mut to_be_remove_index = -1;
-                    for (index, (token, _)) in self.paren_balance.iter().enumerate().rev() {
+                    for (index, (token, span)) in self.paren_balance.iter().enumerate().rev() {
+                        if token == &TokenKind::OpenBrace && span.len() == 2 {
+                            break;
+                        }
                         if token == &TokenKind::TripleBackTick {
                             to_be_remove_index = index as i32;
                             break;
@@ -737,6 +740,8 @@ impl Lexer {
 
                     if to_be_remove_index != -1 {
                         self.paren_balance.remove(to_be_remove_index as usize);
+                    } else {
+                        self.paren_balance.push((TokenKind::TripleBackTick, span));
                     }
                 }
             }
@@ -748,15 +753,16 @@ impl Lexer {
         }
     }
 
-    fn expect_block_or_paren(&mut self, kind: TokenKind) {
+    fn expect_block_or_paren(&mut self, kind: TokenKind, repeat: u32) {
         let token_name = ParenMatching::get_token_name(kind);
         let other_paren = ParenMatching::get_other_pair(kind);
 
         if let Some((paren, span)) = self.paren_balance.last() {
+            let paren_str = ParenMatching::to_string(kind);
+            let other_paren_str = ParenMatching::to_string(other_paren.unwrap_or(TokenKind::Unknown));
+
             if Some(*paren) != other_paren {
                 let info = self.source_manager.get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
-                let paren_str = ParenMatching::to_string(kind);
-                let other_paren_str = ParenMatching::to_string(other_paren.unwrap_or(TokenKind::Unknown));
                 self.diagnostics.builder()
                     .report(DiagnosticLevel::Error, format!("Unmatched {token_name} '{paren_str}'"), info, None)
                     .add_error(format!("Add a matching pair '{other_paren_str}'"), Some(self.source_manager.fix_span(Span::from_usize(self.cursor, self.cursor + 1))))
@@ -769,6 +775,14 @@ impl Lexer {
                     .add_warning(format!("Last opened {token_name} '{}'", ParenMatching::to_string(*paren)), Some(self.source_manager.fix_span(*span)))
                     .commit();
                 return;
+            }
+
+            if span.len() as u32 != repeat {
+                let info = self.source_manager.get_source_info(*span);
+                self.diagnostics.builder()
+                    .report(DiagnosticLevel::Error, format!("Unmatched {token_name}"), info, None)
+                    .add_error(format!("Add a matching pair '{other_paren_str}'"), Some(self.source_manager.fix_span(*span)))
+                    .commit();
             }
             self.paren_balance.pop();
         } else {
@@ -786,6 +800,7 @@ impl Lexer {
         let mut tokens = Vec::new();
         loop {
             let ch = self.peek_char();
+
             if ch.is_none() {
                 if until.is_empty() {
                     tokens.push(Token::new_eof(Span::from_usize(self.cursor, self.cursor + 1)));
@@ -801,6 +816,13 @@ impl Lexer {
                 self.skip_whitespace().map(|token| tokens.push(token));
                 continue;
             }
+
+            // if !self.paren_balance.is_empty() {
+            //     let temp = &self.source_manager.get_source()[self.cursor..(self.cursor + 10).min(self.source_manager.len())];
+            //     let temp = std::str::from_utf8(temp).unwrap();
+            //     println!("str: {temp}");
+            //     println!("paren_balance: {:#?}", self.paren_balance.last());
+            // }
 
             if until.contains(&ch) {
                 break;
@@ -842,21 +864,20 @@ impl Lexer {
                 }
                 ')' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
-                    self.expect_block_or_paren(TokenKind::CloseParen);
+                    self.expect_block_or_paren(TokenKind::CloseParen, 1);
                     tokens.push(Token::new(TokenKind::CloseParen, span, b")"));
                     self.next_char();
                 }
                 '{' => {
-                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    let span = self.skip_while(|c| c == '{');
                     self.paren_balance.push((TokenKind::OpenBrace, span));
-                    tokens.push(Token::new(TokenKind::OpenBrace, span, b"{"));
+                    tokens.push(Token::new_with_repeat(TokenKind::OpenBrace, span, b"{", span.len() as u32));
                     self.next_char();
                 }
                 '}' => {
-                    let span = Span::from_usize(self.cursor, self.cursor + 1);
-                    self.expect_block_or_paren(TokenKind::CloseBrace);
-                    tokens.push(Token::new(TokenKind::CloseBrace, span, b"}"));
-                    self.next_char();
+                    let span = self.skip_while(|c| c == '}');
+                    self.expect_block_or_paren(TokenKind::CloseBrace, span.len() as u32);
+                    tokens.push(Token::new_with_repeat(TokenKind::CloseBrace, span, b"}", span.len() as u32));
                 }
                 '[' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
@@ -866,7 +887,7 @@ impl Lexer {
                 }
                 ']' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
-                    self.expect_block_or_paren(TokenKind::CloseBracket);
+                    self.expect_block_or_paren(TokenKind::CloseBracket, 1);
                     tokens.push(Token::new(TokenKind::CloseBracket, span, b"]"));
                     self.next_char();
                 }
@@ -1038,7 +1059,7 @@ impl Lexer {
                 }
                 ')' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
-                    self.expect_block_or_paren(TokenKind::CloseParen);
+                    self.expect_block_or_paren(TokenKind::CloseParen, 1);
                     tokens.push(Token::new(TokenKind::CloseParen, span, b")"));
                     self.next_char();
                     break;
@@ -1122,7 +1143,7 @@ impl Lexer {
                 }
                 ')' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
-                    self.expect_block_or_paren(TokenKind::CloseParen);
+                    self.expect_block_or_paren(TokenKind::CloseParen, 1);
                     tokens.push(Token::new(TokenKind::CloseParen, span, b")"));
                 }
                 _ => {
@@ -1143,7 +1164,7 @@ impl Lexer {
 
     pub fn lex(&mut self) -> (Vec<Token>, &Diagnostic) {
         let cursor = self.cursor;
-        let (mut tokens, diag) = self.lex_helper(Vec::new(), false);
+        let (mut tokens, diag) = self.lex_helper(Vec::new(), true);
         let mut i = 0;
         for t in tokens.iter().rev() {
             if t.is_eof() {
