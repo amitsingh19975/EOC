@@ -92,7 +92,6 @@ pub(crate) enum TokenKind {
 pub(crate) struct Token {
     pub(crate) kind: TokenKind,
     pub(crate) span: Span,
-    pub(crate) repeat: u32,
 }
 
 impl Token {
@@ -100,7 +99,6 @@ impl Token {
         Token {
             kind,
             span,
-            repeat: 1,
         }
     }
 
@@ -108,16 +106,11 @@ impl Token {
         Self {
             kind: TokenKind::EndOfFile,
             span,
-            repeat: 1,
         }
     }
 
-    pub(crate) fn new_with_repeat(kind: TokenKind, span: Span, repeat: u32) -> Token {
-        Self {
-            kind,
-            span,
-            repeat,
-        }
+    pub(crate) fn repeat(&self) -> usize {
+        self.span.len()
     }
 
     pub(crate) fn as_str<'a>(&self, source_manager: &'a SourceManager) -> &'a str {
@@ -468,7 +461,7 @@ impl Token {
     }
 
     pub(crate) fn to_string(&self, source_manager: &SourceManager) -> String {
-        format!("Token({:?}, '{}', {:?}, repeat={})", self.kind, self.as_str(source_manager), self.span, self.repeat)
+        format!("Token({:?}, '{}', {:?}, repeat={})", self.kind, self.as_str(source_manager), self.span, self.repeat())
     }
 }
 

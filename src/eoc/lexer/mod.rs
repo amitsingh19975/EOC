@@ -78,24 +78,20 @@ impl Lexer {
         Some(match ch {
             '\n' | '\r' => {
                 let span = self.skip_while(|byte| (byte == '\n') || (byte == '\r'));
-                let repeat = span.len() as u32;
-                Token::new_with_repeat(TokenKind::Newline, span, repeat)
+                Token::new(TokenKind::Newline, span)
             }
 
             ' ' => {
                 let span = self.skip_while(|byte| (byte == ' '));
-                let repeat = span.len() as u32;
-                Token::new_with_repeat(TokenKind::Space, span, repeat)
+                Token::new(TokenKind::Space, span)
             }
             '\t' => {
                 let span = self.skip_while(|byte| (byte == '\t'));
-                let repeat = span.len() as u32;
-                Token::new_with_repeat(TokenKind::TabSpace, span, repeat)
+                Token::new(TokenKind::TabSpace, span)
             }
             _ => {
                 let span = self.skip_while(|byte| byte.is_ascii_whitespace());
-                let repeat = span.len() as u32;
-                Token::new_with_repeat(TokenKind::Whitespace, span, repeat)
+                Token::new(TokenKind::Whitespace, span)
             }
         })
     }
@@ -160,7 +156,7 @@ impl Lexer {
         if span.len() == 3 {
             tokens.push(Token::new(TokenKind::Ellipsis, span));
         } else {
-            tokens.push(Token::new_with_repeat(TokenKind::Dot, span, len as u32));
+            tokens.push(Token::new(TokenKind::Dot, span));
         }
     }
 
@@ -710,7 +706,7 @@ impl Lexer {
             let last = self.paren_balance.last().unwrap_or(&dummy);
             let span = Span::from_usize(self.cursor, self.cursor + 3);
             self.cursor += 3;
-            tokens.push(Token::new_with_repeat(TokenKind::TripleBackTick, span,  3));
+            tokens.push(Token::new(TokenKind::TripleBackTick, span));
 
             let (token, _) = last;
 
@@ -861,10 +857,10 @@ impl Lexer {
                     let len = span.len();
                     if len == 2 {
                         self.paren_balance.push((TokenKind::OpenDoubleBrace, span));
-                        tokens.push(Token::new_with_repeat(TokenKind::OpenDoubleBrace, span, 2));
+                        tokens.push(Token::new(TokenKind::OpenDoubleBrace, span));
                     } else {
                         self.paren_balance.push((TokenKind::OpenBrace, span));
-                        tokens.push(Token::new_with_repeat(TokenKind::OpenBrace, span, 1));
+                        tokens.push(Token::new(TokenKind::OpenBrace, span));
                     }
                 }
                 '}' => {
@@ -879,7 +875,7 @@ impl Lexer {
                     let len = span.len();
                     if len == 2 {
                         self.expect_block_or_paren(TokenKind::CloseDoubleBrace);
-                        tokens.push(Token::new_with_repeat(TokenKind::CloseDoubleBrace, span, span.len() as u32));
+                        tokens.push(Token::new(TokenKind::CloseDoubleBrace, span));
                     } else {
                         self.expect_block_or_paren(TokenKind::CloseBrace);
                         tokens.push(Token::new(TokenKind::CloseBrace, span));
@@ -902,15 +898,15 @@ impl Lexer {
                 }
                 ',' => {
                     let span = self.skip_while(|c| c == ',');
-                    tokens.push(Token::new_with_repeat(TokenKind::Comma, span, span.len() as u32));
+                    tokens.push(Token::new(TokenKind::Comma, span));
                 }
                 ';' => {
                     let span = self.skip_while(|c| c == ';');
-                    tokens.push(Token::new_with_repeat(TokenKind::Semicolon, span, span.len() as u32));
+                    tokens.push(Token::new(TokenKind::Semicolon, span));
                 }
                 ':' => {
                     let span = self.skip_while(|c| c == ':');
-                    tokens.push(Token::new_with_repeat(TokenKind::Colon, span, span.len() as u32));
+                    tokens.push(Token::new(TokenKind::Colon, span));
                 }
                 c if Identifier::is_operator_start_code_point(c) => {
                     let span = self.skip_while(|c| Identifier::is_operator_continuation_code_point(c));
