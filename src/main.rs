@@ -7,9 +7,9 @@ fn main() -> Result<()> {
     let filepath = Path::new("source.eoc");
     let diagnostic = StreamingDiagnosticBag::new(Box::new(std::io::stderr()), filepath);
     let mut lexer = eoc::lexer::Lexer::new_from_filepath(filepath, diagnostic)?;
-    let (tokens, diagnostics) = lexer.lex();
-    tokens.iter().for_each(|token| println!("{}", token));
-    println!("{}", diagnostics);
+    let tokens = lexer.lex();
+    tokens.iter().for_each(|token| println!("{}", token.to_string(&lexer.get_source_manager())));
+    println!("{}", lexer.get_diagnostics());
     println!("Operators: {:#?}", lexer.get_custom_operators());
     println!("Keywords: {:#?}", lexer.get_custom_keywords());
     // let mut diagnostics = eoc::utils::diagnostic::DiagnosticBag::new(filepath);

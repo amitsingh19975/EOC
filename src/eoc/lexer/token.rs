@@ -1,7 +1,6 @@
 #![allow(dead_code)]
-use std::fmt::Display;
 
-use crate::eoc::utils::span::Span;
+use crate::eoc::utils::{source_manager::SourceManager, span::Span};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TokenKind {
@@ -93,40 +92,37 @@ pub(crate) enum TokenKind {
 pub(crate) struct Token {
     pub(crate) kind: TokenKind,
     pub(crate) span: Span,
-    pub(crate) value: Vec<u8>,
     pub(crate) repeat: u32,
 }
 
 impl Token {
-    pub(crate) fn new<V: AsRef<[u8]>>(kind: TokenKind, span: Span, value: V) -> Token {
+    pub(crate) fn new(kind: TokenKind, span: Span) -> Token {
         Token {
             kind,
             span,
-            value: value.as_ref().to_vec(),
             repeat: 1,
         }
     }
 
     pub(crate) fn new_eof(span: Span) -> Token {
-        Token {
+        Self {
             kind: TokenKind::EndOfFile,
             span,
-            value: Vec::new(),
             repeat: 1,
         }
     }
 
-    pub(crate) fn new_with_repeat<V: AsRef<[u8]>>(kind: TokenKind, span: Span, value: V, repeat: u32) -> Token {
-        Token {
+    pub(crate) fn new_with_repeat(kind: TokenKind, span: Span, repeat: u32) -> Token {
+        Self {
             kind,
             span,
-            value: value.as_ref().to_vec(),
             repeat,
         }
     }
 
-    pub(crate) fn as_str(&self) -> &str {
-        std::str::from_utf8(&self.value).expect("invalid utf-8 string slice")
+    pub(crate) fn as_str<'a>(&self, source_manager: &'a SourceManager) -> &'a str {
+        let source = &source_manager[self.span];
+        std::str::from_utf8(source).expect("invalid utf-8 string slice")
     }
 
     pub(crate) fn is_eof(&self) -> bool {
@@ -183,12 +179,14 @@ impl Token {
         }
     }
 
-    pub(crate) fn is_arrow(&self) -> bool {
-        (self.kind == TokenKind::Arrow) || ((self.kind == TokenKind::Operator) && (self.value == b"->"))
+    pub(crate) fn is_arrow(&self, source_manager: &SourceManager) -> bool {
+        let source = &source_manager[self.span];
+        (self.kind == TokenKind::Arrow) || ((self.kind == TokenKind::Operator) && (source == b"->"))
     }
 
-    pub(crate) fn is_fat_arrow(&self) -> bool {
-        (self.kind == TokenKind::FatArrow) || ((self.kind == TokenKind::Operator) && (self.value == b"=>"))
+    pub(crate) fn is_fat_arrow(&self, source_manager: &SourceManager) -> bool {
+        let source = &source_manager[self.span];
+        (self.kind == TokenKind::FatArrow) || ((self.kind == TokenKind::Operator) && (source == b"=>"))
     }
 
     pub(crate) fn is_operator(&self) -> bool {
@@ -468,11 +466,9 @@ impl Token {
             _ => false,
         }
     }
-}
 
-impl Display for Token {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Token({:?}, '{}', {:?}, repeat={})", self.kind, self.as_str(), self.span, self.repeat)
+    pub(crate) fn to_string(&self, source_manager: &SourceManager) -> String {
+        format!("Token({:?}, '{}', {:?}, repeat={})", self.kind, self.as_str(source_manager), self.span, self.repeat)
     }
 }
 

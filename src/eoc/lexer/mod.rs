@@ -36,6 +36,14 @@ impl Lexer {
         Ok(Self::new(source_manager, diagnostic))
     }
 
+    pub(crate) fn get_source_manager(&self) -> &SourceManager {
+        &self.source_manager
+    }
+    
+    pub(crate) fn get_diagnostics(&self) -> &Diagnostic {
+        &self.diagnostics
+    }
+
     fn next_char(&mut self) -> Option<char> {
         let (ch, len) = self.source_manager.get_char(self.cursor) ;
         self.cursor = (self.cursor + len).min(self.source_manager.len());
@@ -71,24 +79,23 @@ impl Lexer {
             '\n' | '\r' => {
                 let span = self.skip_while(|byte| (byte == '\n') || (byte == '\r'));
                 let repeat = span.len() as u32;
-                Token::new_with_repeat(TokenKind::Newline, span, b"\\n", repeat)
+                Token::new_with_repeat(TokenKind::Newline, span, repeat)
             }
 
             ' ' => {
                 let span = self.skip_while(|byte| (byte == ' '));
                 let repeat = span.len() as u32;
-                Token::new_with_repeat(TokenKind::Space, span, b" ", repeat)
+                Token::new_with_repeat(TokenKind::Space, span, repeat)
             }
             '\t' => {
                 let span = self.skip_while(|byte| (byte == '\t'));
                 let repeat = span.len() as u32;
-                Token::new_with_repeat(TokenKind::TabSpace, span, b"\\t", repeat)
+                Token::new_with_repeat(TokenKind::TabSpace, span, repeat)
             }
             _ => {
                 let span = self.skip_while(|byte| byte.is_ascii_whitespace());
                 let repeat = span.len() as u32;
-                let slice = &self.source_manager[span];
-                Token::new_with_repeat(TokenKind::Whitespace, span, slice, repeat)
+                Token::new_with_repeat(TokenKind::Whitespace, span, repeat)
             }
         })
     }
@@ -127,7 +134,7 @@ impl Lexer {
         let span = self.skip_while(|c| is_valid_identifier_continuation_code_point(c));
         let slice = &self.source_manager[span];
         let kind: TokenKind = slice.into();
-        tokens.push(Token::new(kind, span, slice));
+        tokens.push(Token::new(kind, span));
 
         if should_parse_nested_operator {
             if kind == TokenKind::KwOperator {
@@ -151,11 +158,9 @@ impl Lexer {
         }
 
         if span.len() == 3 {
-            let slice = &self.source_manager[span];
-            tokens.push(Token::new(TokenKind::Ellipsis, span, slice));
+            tokens.push(Token::new(TokenKind::Ellipsis, span));
         } else {
-            let slice = &self.source_manager[span];
-            tokens.push(Token::new_with_repeat(TokenKind::Dot, span, slice, len as u32));
+            tokens.push(Token::new_with_repeat(TokenKind::Dot, span, len as u32));
         }
     }
 
@@ -213,8 +218,7 @@ impl Lexer {
                 }
     
                 let span = Span::from_usize(start, span.end as usize);
-                let slice: Vec<u8> = self.source_manager[span].iter().filter(|c| **c != b'_').map(|c| *c).collect();
-                tokens.push(Token::new(TokenKind::Integer, span, slice));
+                tokens.push(Token::new(TokenKind::Integer, span));
                 return true;
             }
             
@@ -235,7 +239,7 @@ impl Lexer {
                         return true;
                     }
                 }
-                tokens.push(Token::new(TokenKind::Integer, span, slice));
+                tokens.push(Token::new(TokenKind::Integer, span));
                 return true;
             }
 
@@ -243,8 +247,7 @@ impl Lexer {
                 self.next_char();
                 let span = self.skip_while(|c| c == '0' || c == '1' || c == '_');
                 let span = Span::from_usize(start, span.end as usize);
-                let slice: Vec<u8> = self.source_manager[span].iter().filter(|c| **c != b'_').map(|c| *c).collect();
-                tokens.push(Token::new(TokenKind::Integer, span, slice));
+                tokens.push(Token::new(TokenKind::Integer, span));
                 return true;
             }
         }
@@ -255,8 +258,7 @@ impl Lexer {
             return false;
         }
         let span = Span::from_usize(start, span.end as usize);
-        let slice: Vec<u8> = self.source_manager[span].iter().filter(|c| **c != b'_').map(|c| *c).collect();
-        tokens.push(Token::new(TokenKind::Integer, span, slice));
+        tokens.push(Token::new(TokenKind::Integer, span));
         
         return true;
     }
@@ -301,16 +303,15 @@ impl Lexer {
                 }
                 let p_span = self.skip_while(|c| c.is_ascii_digit() || c == '_');
                 span = Span::from_usize(start, p_span.end as usize);
-                let slice: Vec<u8> = self.source_manager[span].iter().filter(|c| **c != b'_').map(|c| *c).collect();
-                tokens.push(Token::new(TokenKind::FloatingPoint, span, slice));
+                tokens.push(Token::new(TokenKind::FloatingPoint, span));
                 return true;
             }
 
-            let slice: Vec<u8> = self.source_manager[span].iter().filter(|c| **c != b'_').map(|c| *c).collect();
+            let slice = self.source_manager[span].iter().filter(|c| **c != b'_').map(|c| *c);
 
             let mut dot_count = 0;
-            for (index, byte) in slice.iter().enumerate() {
-                if *byte == b'.' {
+            for (index, byte) in slice.enumerate() {
+                if byte == b'.' {
                     dot_count += 1;
                 }
 
@@ -327,7 +328,7 @@ impl Lexer {
                 }
             }
 
-            tokens.push(Token::new(TokenKind::FloatingPoint, span, slice));
+            tokens.push(Token::new(TokenKind::FloatingPoint, span));
             return true;
         }
 
@@ -346,8 +347,7 @@ impl Lexer {
             }
             let e_span = self.skip_while(|c| c.is_ascii_digit() || c == '_');
             span = Span::from_usize(start, e_span.end as usize as usize);
-            let slice: Vec<u8> = self.source_manager[span].iter().filter(|c| **c != b'_').map(|c| *c).collect();
-            tokens.push(Token::new(TokenKind::FloatingPoint, span, slice));
+            tokens.push(Token::new(TokenKind::FloatingPoint, span));
             return true;
         }
 
@@ -372,7 +372,7 @@ impl Lexer {
             }
         }
 
-        tokens.push(Token::new(TokenKind::FloatingPoint, span, slice));
+        tokens.push(Token::new(TokenKind::FloatingPoint, span));
 
         return true;
     }
@@ -388,7 +388,7 @@ impl Lexer {
     }
 
     fn lex_formatting_string(&mut self) -> Vec<Token> {
-        self.lex_helper(vec!['}'], false).0
+        self.lex_helper(vec!['}'], false)
     }
 
     fn lex_double_quoted_string(&mut self, tokens: &mut Vec<Token>) {
@@ -399,7 +399,7 @@ impl Lexer {
         let mut is_escaping = false;
         let mut is_escaping_formatting = false;
 
-        tokens.push(Token::new(TokenKind::StartFormattingString, Span::from_usize(self.cursor, self.cursor + 1), b"\""));
+        tokens.push(Token::new(TokenKind::StartFormattingString, Span::from_usize(self.cursor, self.cursor + 1)));
 
         let start_quote_span = Span::from_usize(self.cursor, self.cursor + 1);
 
@@ -437,7 +437,7 @@ impl Lexer {
 
                 {
                     let span = Span::from_usize(start, end);
-                    tokens.push(Token::new(TokenKind::String, span, &self.source_manager[span]));
+                    tokens.push(Token::new(TokenKind::String, span));
                     let format_tokens = self.lex_formatting_string();
 
                     if self.peek_char() != Some('}') {
@@ -508,9 +508,8 @@ impl Lexer {
         if start_quote_span == span || self.peek_char() != Some('"') {
             return;
         }
-        let slice = &self.source_manager[span];
-        tokens.push(Token::new(TokenKind::String, span, slice));
-        tokens.push(Token::new(TokenKind::EndFormattingString, Span::from_usize(self.cursor, self.cursor + 1), b"\""));
+        tokens.push(Token::new(TokenKind::String, span));
+        tokens.push(Token::new(TokenKind::EndFormattingString, Span::from_usize(self.cursor, self.cursor + 1)));
         self.next_char();
 
     }
@@ -573,8 +572,7 @@ impl Lexer {
         }
 
         let span = Span::from_usize(start, end);
-        let slice = &self.source_manager[span];
-        tokens.push(Token::new(TokenKind::Char, span, slice));
+        tokens.push(Token::new(TokenKind::Char, span));
     }
 
     fn lex_single_line_comment(&mut self, tokens: &mut Vec<Token>) {
@@ -593,9 +591,7 @@ impl Lexer {
             self.next_char();
         }
 
-
-        let slice = &self.source_manager[span];
-        tokens.push(Token::new(kind, span, slice));
+        tokens.push(Token::new(kind, span));
     }
     
     fn lex_multiline_comment(&mut self, tokens: &mut Vec<Token>) {
@@ -663,8 +659,7 @@ impl Lexer {
         }
 
         let span = Span::from_usize(start, end);
-        let slice = &self.source_manager[span];
-        tokens.push(Token::new(TokenKind::MultiLineComment, span, slice));
+        tokens.push(Token::new(TokenKind::MultiLineComment, span));
     }
     
     fn lex_comment(&mut self, tokens: &mut Vec<Token>) {
@@ -715,7 +710,7 @@ impl Lexer {
             let last = self.paren_balance.last().unwrap_or(&dummy);
             let span = Span::from_usize(self.cursor, self.cursor + 3);
             self.cursor += 3;
-            tokens.push(Token::new_with_repeat(TokenKind::TripleBackTick, span, b"`", 3));
+            tokens.push(Token::new_with_repeat(TokenKind::TripleBackTick, span,  3));
 
             let (token, _) = last;
 
@@ -742,7 +737,7 @@ impl Lexer {
 
         } else {
             let span = Span::from_usize(self.cursor, self.cursor + 1);
-            tokens.push(Token::new(TokenKind::Backtick, span, b"`"));
+            tokens.push(Token::new(TokenKind::Backtick, span));
             self.next_char();
         }
     }
@@ -783,14 +778,14 @@ impl Lexer {
         }
     }
     
-    fn lex_helper(&mut self, until: Vec<char>, should_check_paren: bool) -> (Vec<Token>, &Diagnostic) {
+    fn lex_helper(&mut self, until: Vec<char>, should_check_paren: bool) -> Vec<Token> {
         let mut tokens = Vec::new();
         loop {
             let ch = self.peek_char();
 
             if ch.is_none() {
                 if until.is_empty() {
-                    tokens.push(Token::new_eof(Span::from_usize(self.cursor, self.cursor + 1)));
+                    tokens.push(Token::new_eof(Span::from_usize(self.cursor, self.cursor)));
                 }
                 break;
             }
@@ -839,20 +834,19 @@ impl Lexer {
                 }
                 '$' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
-                    let slice = &self.source_manager[span];
-                    tokens.push(Token::new(TokenKind::Dollar, span, slice));
+                    tokens.push(Token::new(TokenKind::Dollar, span));
                     self.next_char();
                 }
                 '(' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
                     self.paren_balance.push((TokenKind::OpenParen, span));
-                    tokens.push(Token::new(TokenKind::OpenParen, span, b"("));
+                    tokens.push(Token::new(TokenKind::OpenParen, span));
                     self.next_char();
                 }
                 ')' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
                     self.expect_block_or_paren(TokenKind::CloseParen);
-                    tokens.push(Token::new(TokenKind::CloseParen, span, b")"));
+                    tokens.push(Token::new(TokenKind::CloseParen, span));
                     self.next_char();
                 }
                 '{' => {
@@ -867,10 +861,10 @@ impl Lexer {
                     let len = span.len();
                     if len == 2 {
                         self.paren_balance.push((TokenKind::OpenDoubleBrace, span));
-                        tokens.push(Token::new_with_repeat(TokenKind::OpenDoubleBrace, span, b"{", 2));
+                        tokens.push(Token::new_with_repeat(TokenKind::OpenDoubleBrace, span, 2));
                     } else {
                         self.paren_balance.push((TokenKind::OpenBrace, span));
-                        tokens.push(Token::new_with_repeat(TokenKind::OpenBrace, span, b"{", 1));
+                        tokens.push(Token::new_with_repeat(TokenKind::OpenBrace, span, 1));
                     }
                 }
                 '}' => {
@@ -885,22 +879,22 @@ impl Lexer {
                     let len = span.len();
                     if len == 2 {
                         self.expect_block_or_paren(TokenKind::CloseDoubleBrace);
-                        tokens.push(Token::new_with_repeat(TokenKind::CloseDoubleBrace, span, b"}", span.len() as u32));
+                        tokens.push(Token::new_with_repeat(TokenKind::CloseDoubleBrace, span, span.len() as u32));
                     } else {
                         self.expect_block_or_paren(TokenKind::CloseBrace);
-                        tokens.push(Token::new(TokenKind::CloseBrace, span, b"}"));
+                        tokens.push(Token::new(TokenKind::CloseBrace, span));
                     }
                 }
                 '[' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
                     self.paren_balance.push((TokenKind::OpenBracket, span));
-                    tokens.push(Token::new(TokenKind::OpenBracket, span, b"["));
+                    tokens.push(Token::new(TokenKind::OpenBracket, span));
                     self.next_char();
                 }
                 ']' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
                     self.expect_block_or_paren(TokenKind::CloseBracket);
-                    tokens.push(Token::new(TokenKind::CloseBracket, span, b"]"));
+                    tokens.push(Token::new(TokenKind::CloseBracket, span));
                     self.next_char();
                 }
                 '.' => {
@@ -908,20 +902,19 @@ impl Lexer {
                 }
                 ',' => {
                     let span = self.skip_while(|c| c == ',');
-                    tokens.push(Token::new_with_repeat(TokenKind::Comma, span, b",", span.len() as u32));
+                    tokens.push(Token::new_with_repeat(TokenKind::Comma, span, span.len() as u32));
                 }
                 ';' => {
                     let span = self.skip_while(|c| c == ';');
-                    tokens.push(Token::new_with_repeat(TokenKind::Semicolon, span, b";", span.len() as u32));
+                    tokens.push(Token::new_with_repeat(TokenKind::Semicolon, span, span.len() as u32));
                 }
                 ':' => {
                     let span = self.skip_while(|c| c == ':');
-                    tokens.push(Token::new_with_repeat(TokenKind::Colon, span, b":", span.len() as u32));
+                    tokens.push(Token::new_with_repeat(TokenKind::Colon, span, span.len() as u32));
                 }
                 c if Identifier::is_operator_start_code_point(c) => {
                     let span = self.skip_while(|c| Identifier::is_operator_continuation_code_point(c));
-                    let slice = &self.source_manager[span];
-                    tokens.push(Token::new(TokenKind::Operator, span, slice));
+                    tokens.push(Token::new(TokenKind::Operator, span));
                 }
                 '"' => {
                     self.lex_double_quoted_string(&mut tokens);
@@ -931,14 +924,12 @@ impl Lexer {
                 }
                 '@' => {
                     let span = Span::from_usize(self.cursor , self.cursor + 1);
-                    let slice = &self.source_manager[span];
-                    tokens.push(Token::new(TokenKind::AtSign, span, slice));
+                    tokens.push(Token::new(TokenKind::AtSign, span));
                     self.next_char();
                 }
                 '\\' => {
                     let span = Span::from_usize(self.cursor , self.cursor + 1);
-                    let slice = &self.source_manager[span];
-                    tokens.push(Token::new(TokenKind::Backslash, span, slice));
+                    tokens.push(Token::new(TokenKind::Backslash, span));
                     self.next_char();
                 }
                 '`' => {
@@ -946,7 +937,7 @@ impl Lexer {
                 }
                 _ => {
                     self.check_balanced_paren(&until);
-                    tokens.iter().for_each(|token| println!("{}", token));
+                    tokens.iter().for_each(|token| println!("{}", token.to_string(&self.source_manager)));
                     todo!("Implement the rest of the lexer: {} | {:?}", self.cursor, ch)
                 }
             }
@@ -956,7 +947,7 @@ impl Lexer {
             self.check_balanced_paren(&until);
         }
 
-        (tokens, &self.diagnostics)
+        tokens
     }
 
     fn match_custom_operator(&self, source: &[u8]) -> (Option<Token>, usize){
@@ -972,7 +963,7 @@ impl Lexer {
             let start = self.cursor;
             let end = start + bytes.len();
             if bytes == source {
-                valid_op = Some(Token::new(TokenKind::Operator, Span::from_usize(start, end), bytes));
+                valid_op = Some(Token::new(TokenKind::Operator, Span::from_usize(start, end)));
                 len = bytes.len();
                 break;
             }
@@ -994,7 +985,7 @@ impl Lexer {
             let start = self.cursor;
             let end = start + bytes.len();
             if bytes == source {
-                valid_kw = Some(Token::new(TokenKind::CustomKeyword, Span::from_usize(start, end), bytes));
+                valid_kw = Some(Token::new(TokenKind::CustomKeyword, Span::from_usize(start, end)));
                 len = bytes.len();
                 break;
             }
@@ -1041,7 +1032,7 @@ impl Lexer {
                         self.skip_while(|c| Identifier::is_operator_continuation_code_point(c))
                     };
                     let slice = &self.source_manager[span];
-                    tokens.push(Token::new(TokenKind::Operator, span, slice));
+                    tokens.push(Token::new(TokenKind::Operator, span));
                     let dup = self.custom_operators.iter().filter(|op| op.identifier.as_str().as_bytes() == slice).last();
                     let is_invalid = dup.is_some() ||
                         slice == b"." || slice == b"...";
@@ -1066,13 +1057,13 @@ impl Lexer {
                 '(' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
                     self.paren_balance.push((TokenKind::OpenParen, span));
-                    tokens.push(Token::new(TokenKind::OpenParen, span, b"("));
+                    tokens.push(Token::new(TokenKind::OpenParen, span));
                     self.next_char();
                 }
                 ')' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
                     self.expect_block_or_paren(TokenKind::CloseParen);
-                    tokens.push(Token::new(TokenKind::CloseParen, span, b")"));
+                    tokens.push(Token::new(TokenKind::CloseParen, span));
                     self.next_char();
                     break;
                 }
@@ -1126,7 +1117,7 @@ impl Lexer {
                 c if is_valid_identifier_start_code_point(c) => {
                     let span = self.skip_while(|c| is_valid_identifier_continuation_code_point(c));
                     let slice = &self.source_manager[span];
-                    tokens.push(Token::new(TokenKind::CustomKeyword, span, slice));
+                    tokens.push(Token::new(TokenKind::CustomKeyword, span));
                     let dup = self.custom_keywords.iter().filter(|op| op.identifier.as_str().as_bytes() == slice).last();
                     let is_invalid = dup.is_some();
                     if is_invalid {
@@ -1150,13 +1141,13 @@ impl Lexer {
                 '(' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
                     self.paren_balance.push((TokenKind::OpenParen, span));
-                    tokens.push(Token::new(TokenKind::OpenParen, span, b"("));
+                    tokens.push(Token::new(TokenKind::OpenParen, span));
                     self.next_char();
                 }
                 ')' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
                     self.expect_block_or_paren(TokenKind::CloseParen);
-                    tokens.push(Token::new(TokenKind::CloseParen, span, b")"));
+                    tokens.push(Token::new(TokenKind::CloseParen, span));
                 }
                 _ => {
                     break;
@@ -1174,9 +1165,9 @@ impl Lexer {
         tokens
     }
 
-    pub fn lex(&mut self) -> (Vec<Token>, &Diagnostic) {
+    pub fn lex(&mut self) -> Vec<Token> {
         let cursor = self.cursor;
-        let (mut tokens, diag) = self.lex_helper(Vec::new(), true);
+        let mut tokens = self.lex_helper(Vec::new(), true);
         let mut i = 0;
         for t in tokens.iter().rev() {
             if t.is_eof() {
@@ -1187,12 +1178,12 @@ impl Lexer {
         }
 
         if i == 0 {
-            tokens.push(Token::new_eof(Span::from_usize(cursor, cursor + 1)));
+            tokens.push(Token::new_eof(Span::from_usize(cursor, cursor)));
         } else if i > 1 {
             tokens.truncate(tokens.len() - (i - 1));
         }
 
-        (tokens, diag)
+        tokens
     }
 
 }
