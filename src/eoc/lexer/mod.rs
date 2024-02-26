@@ -1,22 +1,30 @@
+use self::{
+    token::{Token, TokenKind},
+    utils::{
+        is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point,
+        is_valid_operator_continuation_code_point, is_valid_operator_start_code_point,
+        CustomOperator, ParenMatching,
+    },
+};
+use super::{
+    ast::identifier::Identifier,
+    utils::{
+        diagnostic::{Diagnostic, DiagnosticLevel, DiagnosticReporter},
+        source_manager::SourceManager,
+        span::Span,
+    },
+};
 use std::{path::Path, vec};
-use self::{token::{Token, TokenKind}, utils::{is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point, ParenMatching}};
-use super::{ast::identifier::Identifier, utils::{diagnostic::{Diagnostic, DiagnosticLevel, DiagnosticReporter}, source_manager::SourceManager, span::Span}};
 pub(crate) mod token;
 pub(crate) mod utils;
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct CustomIdentifier {
-    pub(crate) identifier: Identifier,
-    pub(crate) span: Span
-}
 
 pub(crate) struct Lexer {
     source_manager: SourceManager,
     cursor: usize,
     paren_balance: Vec<(TokenKind, Span)>,
     diagnostics: Diagnostic,
-    custom_operators: Vec<CustomIdentifier>,
-    custom_keywords: Vec<CustomIdentifier>,
+    custom_operators: Vec<CustomOperator>,
+    custom_keywords: Vec<Identifier>,
 }
 
 impl Lexer {
@@ -31,7 +39,10 @@ impl Lexer {
         }
     }
 
-    pub(crate) fn new_from_filepath<P: AsRef<Path>, D: Into<Diagnostic>>(path: P, diagnostic: D) -> Result<Self, std::io::Error> {
+    pub(crate) fn new_from_filepath<P: AsRef<Path>, D: Into<Diagnostic>>(
+        path: P,
+        diagnostic: D,
+    ) -> Result<Self, std::io::Error> {
         let source_manager = SourceManager::new(path)?;
         Ok(Self::new(source_manager, diagnostic))
     }
@@ -39,13 +50,13 @@ impl Lexer {
     pub(crate) fn get_source_manager(&self) -> &SourceManager {
         &self.source_manager
     }
-    
+
     pub(crate) fn get_diagnostics(&self) -> &Diagnostic {
         &self.diagnostics
     }
 
     fn next_char(&mut self) -> Option<char> {
-        let (ch, len) = self.source_manager.get_char(self.cursor) ;
+        let (ch, len) = self.source_manager.get_char(self.cursor);
         self.cursor = (self.cursor + len).min(self.source_manager.len());
         ch
     }
@@ -71,9 +82,7 @@ impl Lexer {
             return None;
         }
 
-        let ch = unsafe {
-            ch.unwrap_unchecked()
-        };
+        let ch = unsafe { ch.unwrap_unchecked() };
 
         Some(match ch {
             '\n' | '\r' => {
@@ -101,28 +110,37 @@ impl Lexer {
             if until_chars.contains(&ParenMatching::to_str(*token).chars().next().unwrap()) {
                 continue;
             }
-            
-            let other_kind = ParenMatching::get_other_pair(*token).unwrap_or(TokenKind::Dot);
+
+            let other_kind = ParenMatching::get_other_pair(*token).unwrap_or(TokenKind::Unknown);
             if until_chars.contains(&ParenMatching::to_str(other_kind).chars().next().unwrap()) {
                 continue;
             }
 
             let token_name = ParenMatching::get_token_name(*token);
 
-            self.diagnostics.builder()
-                .report(DiagnosticLevel::Error, format!("Unmatched {token_name}"), self.source_manager.get_source_info(*span), None)
-                .add_error(format!("Remove or add matching {token_name}"), Some(self.source_manager.fix_span(*span)))
+            self.diagnostics
+                .builder()
+                .report(
+                    DiagnosticLevel::Error,
+                    format!("Unmatched {token_name}"),
+                    self.source_manager.get_source_info(*span),
+                    None,
+                )
+                .add_error(
+                    format!("Remove or add matching {token_name}"),
+                    Some(self.source_manager.fix_span(*span)),
+                )
                 .commit();
         }
 
         self.paren_balance.clear();
     }
 
-    pub(crate) fn get_custom_operators(&self) -> &Vec<CustomIdentifier> {
+    pub(crate) fn get_custom_operators(&self) -> &Vec<CustomOperator> {
         &self.custom_operators
     }
 
-    pub(crate) fn get_custom_keywords(&self) -> &Vec<CustomIdentifier> {
+    pub(crate) fn get_custom_keywords(&self) -> &Vec<Identifier> {
         &self.custom_keywords
     }
 
@@ -143,23 +161,6 @@ impl Lexer {
         }
     }
 
-    fn lex_dot(&mut self, tokens: &mut Vec<Token>) {
-        let span = self.skip_while(|c| c == '.');
-        let len = span.len();
-        if let Some(next_char) = self.peek_char() {
-            if next_char.is_ascii_digit() && len == 1 {
-                self.lex_number(tokens);
-                return;
-            }
-        }
-
-        if span.len() == 3 {
-            tokens.push(Token::new(TokenKind::Ellipsis, span));
-        } else {
-            tokens.push(Token::new(TokenKind::Dot, span));
-        }
-    }
-
     ///   integer_literal  ::= [0-9][0-9_]*
     ///   integer_literal  ::= 0x[0-9a-fA-F][0-9a-fA-F_]*
     ///   integer_literal  ::= 0o[0-7][0-7_]*
@@ -170,7 +171,7 @@ impl Lexer {
         }
 
         let temp = self.cursor;
-        
+
         while let Some(ch) = self.peek_char() {
             match ch {
                 'e' | 'E' | '.' | 'p' | 'P' => {
@@ -191,9 +192,7 @@ impl Lexer {
             return false;
         }
 
-        let ch = unsafe {
-            ch.unwrap_unchecked()
-        };
+        let ch = unsafe { ch.unwrap_unchecked() };
 
         if !ch.is_ascii_digit() {
             return false;
@@ -212,25 +211,33 @@ impl Lexer {
                     self.cursor = start;
                     return false;
                 }
-    
+
                 let span = Span::from_usize(start, span.end as usize);
                 tokens.push(Token::new(TokenKind::Integer, span));
                 return true;
             }
-            
+
             if self.peek_char() == Some('o') {
                 self.next_char();
                 let span = self.skip_while(|c| c.is_ascii_digit() || c == '_');
                 let span = Span::from_usize(start, span.end as usize);
-                let slice: Vec<u8> = self.source_manager[span].iter().filter(|c| **c != b'_').map(|c| *c).collect();
+                let slice: Vec<u8> = self.source_manager[span]
+                    .iter()
+                    .filter(|c| **c != b'_')
+                    .map(|c| *c)
+                    .collect();
                 for (index, byte) in slice.iter().enumerate() {
                     if *byte > b'7' {
                         let start = span.start as usize + 2 + 1;
                         let span = Span::from_usize(start + index, start + index + 1);
                         let info = self.source_manager.get_source_info(span);
-                        self.diagnostics.builder()
+                        self.diagnostics
+                            .builder()
                             .report(DiagnosticLevel::Error, "Invalid octal digit", info, None)
-                            .add_error("Octal digit must be between 0 and 7", Some(self.source_manager.fix_span(span)))
+                            .add_error(
+                                "Octal digit must be between 0 and 7",
+                                Some(self.source_manager.fix_span(span)),
+                            )
                             .commit();
                         return true;
                     }
@@ -255,7 +262,7 @@ impl Lexer {
         }
         let span = Span::from_usize(start, span.end as usize);
         tokens.push(Token::new(TokenKind::Integer, span));
-        
+
         return true;
     }
 
@@ -270,9 +277,7 @@ impl Lexer {
             return false;
         }
 
-        let ch = unsafe {
-            ch.unwrap_unchecked()
-        };
+        let ch = unsafe { ch.unwrap_unchecked() };
 
         if !ch.is_ascii_digit() && ch != '.' {
             return false;
@@ -303,7 +308,10 @@ impl Lexer {
                 return true;
             }
 
-            let slice = self.source_manager[span].iter().filter(|c| **c != b'_').map(|c| *c);
+            let slice = self.source_manager[span]
+                .iter()
+                .filter(|c| **c != b'_')
+                .map(|c| *c);
 
             let mut dot_count = 0;
             for (index, byte) in slice.enumerate() {
@@ -316,9 +324,18 @@ impl Lexer {
 
                 if dot_count > 1 {
                     let info = self.source_manager.get_source_info(span);
-                    self.diagnostics.builder()
-                        .report(DiagnosticLevel::Error, "Invalid floating point literal", info, None)
-                        .add_error("Invalid floating point literal", Some(self.source_manager.fix_span(span)))
+                    self.diagnostics
+                        .builder()
+                        .report(
+                            DiagnosticLevel::Error,
+                            "Invalid floating point literal",
+                            info,
+                            None,
+                        )
+                        .add_error(
+                            "Invalid floating point literal",
+                            Some(self.source_manager.fix_span(span)),
+                        )
                         .commit();
                     return true;
                 }
@@ -347,7 +364,11 @@ impl Lexer {
             return true;
         }
 
-        let slice: Vec<u8> = self.source_manager[span].iter().filter(|c| **c != b'_').map(|c| *c).collect();
+        let slice: Vec<u8> = self.source_manager[span]
+            .iter()
+            .filter(|c| **c != b'_')
+            .map(|c| *c)
+            .collect();
 
         let mut dot_count = 0;
         for (index, byte) in slice.iter().enumerate() {
@@ -360,9 +381,18 @@ impl Lexer {
 
             if dot_count > 1 {
                 let info = self.source_manager.get_source_info(span);
-                self.diagnostics.builder()
-                    .report(DiagnosticLevel::Error, "Invalid floating point literal", info, None)
-                    .add_error("Invalid floating point literal", Some(self.source_manager.fix_span(span)))
+                self.diagnostics
+                    .builder()
+                    .report(
+                        DiagnosticLevel::Error,
+                        "Invalid floating point literal",
+                        info,
+                        None,
+                    )
+                    .add_error(
+                        "Invalid floating point literal",
+                        Some(self.source_manager.fix_span(span)),
+                    )
                     .commit();
                 return true;
             }
@@ -395,40 +425,46 @@ impl Lexer {
         let mut is_escaping = false;
         let mut is_escaping_formatting = false;
 
-        tokens.push(Token::new(TokenKind::StartFormattingString, Span::from_usize(self.cursor, self.cursor + 1)));
+        tokens.push(Token::new(
+            TokenKind::StartFormattingString,
+            Span::from_usize(self.cursor, self.cursor + 1),
+        ));
 
         let start_quote_span = Span::from_usize(self.cursor, self.cursor + 1);
 
         self.next_char();
         let mut start = self.cursor;
         let mut end = self.cursor;
-        
+
         loop {
             let ch = self.peek_char();
             if ch.is_none() {
                 let info = self.source_manager.get_source_info(start_quote_span);
-                self.diagnostics.builder()
+                self.diagnostics
+                    .builder()
                     .report(DiagnosticLevel::Error, "Unterminated string", info, None)
-                    .add_error("Unterminated string", Some(self.source_manager.fix_span(start_quote_span)))
+                    .add_error(
+                        "Unterminated string",
+                        Some(self.source_manager.fix_span(start_quote_span)),
+                    )
                     .commit();
                 break;
             }
 
-            let ch = unsafe {
-                ch.unwrap_unchecked()
-            };
-            
+            let ch = unsafe { ch.unwrap_unchecked() };
+
             if ch == '{' {
                 let end = self.cursor;
                 self.next_char();
-                if self.peek_char() == Some('{')  {
+                if self.peek_char() == Some('{') {
                     is_escaping_formatting = true;
                     self.next_char();
                     continue;
                 }
                 let old_parens = self.paren_balance.clone();
                 self.paren_balance.clear();
-                self.paren_balance.push((TokenKind::OpenBrace, Span::from_usize(end, end + 1)));
+                self.paren_balance
+                    .push((TokenKind::OpenBrace, Span::from_usize(end, end + 1)));
                 let mut has_error = false;
 
                 {
@@ -437,17 +473,29 @@ impl Lexer {
                     let format_tokens = self.lex_formatting_string();
 
                     if self.peek_char() != Some('}') {
-                        let last_seen_quote = format_tokens.iter().rev().find(|token| token.kind == TokenKind::StartFormattingString);
-                        if let Some((TokenKind::StartFormattingString, q_span)) = last_seen_quote.map(|token| (token.kind, token.span)) {
+                        let last_seen_quote = format_tokens
+                            .iter()
+                            .rev()
+                            .find(|token| token.kind == TokenKind::StartFormattingString);
+                        if let Some((TokenKind::StartFormattingString, q_span)) =
+                            last_seen_quote.map(|token| (token.kind, token.span))
+                        {
                             let info = self.source_manager.get_source_info(q_span);
-                            self.diagnostics.builder()
+                            self.diagnostics
+                                .builder()
                                 .report(DiagnosticLevel::Error, "Missing matching '}'", info, None)
-                                .add_info("Add '}' before this '\"'", Some(self.source_manager.fix_span(q_span)))
+                                .add_info(
+                                    "Add '}' before this '\"'",
+                                    Some(self.source_manager.fix_span(q_span)),
+                                )
                                 .commit();
                             has_error = true;
                         } else {
-                            let info = self.source_manager.get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
-                            self.diagnostics.builder()
+                            let info = self
+                                .source_manager
+                                .get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
+                            self.diagnostics
+                                .builder()
                                 .report(DiagnosticLevel::Error, "Missing matching '}'", info, None)
                                 .commit();
                         }
@@ -485,15 +533,29 @@ impl Lexer {
                 match ch {
                     'n' | 'r' | 't' | '0' | '\\' | '\'' | '"' | 'x' => {
                         is_escaping = false;
-                        self.next_char();   
+                        self.next_char();
                     }
                     _ => {
-                        let info = self.source_manager.get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
-                        self.diagnostics.builder()
-                            .report(DiagnosticLevel::Error, "Invalid escape sequence", info, None)
-                            .add_error("Invalid escape sequence", Some(self.source_manager.fix_span(Span::from_usize(self.cursor, self.cursor + 1))))
+                        let info = self
+                            .source_manager
+                            .get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
+                        self.diagnostics
+                            .builder()
+                            .report(
+                                DiagnosticLevel::Error,
+                                "Invalid escape sequence",
+                                info,
+                                None,
+                            )
+                            .add_error(
+                                "Invalid escape sequence",
+                                Some(
+                                    self.source_manager
+                                        .fix_span(Span::from_usize(self.cursor, self.cursor + 1)),
+                                ),
+                            )
                             .commit();
-                    }       
+                    }
                 }
             } else {
                 self.next_char();
@@ -505,9 +567,11 @@ impl Lexer {
             return;
         }
         tokens.push(Token::new(TokenKind::String, span));
-        tokens.push(Token::new(TokenKind::EndFormattingString, Span::from_usize(self.cursor, self.cursor + 1)));
+        tokens.push(Token::new(
+            TokenKind::EndFormattingString,
+            Span::from_usize(self.cursor, self.cursor + 1),
+        ));
         self.next_char();
-
     }
 
     fn lex_character_literal(&mut self, tokens: &mut Vec<Token>) {
@@ -524,17 +588,26 @@ impl Lexer {
         loop {
             let ch = self.peek_char();
             if ch.is_none() {
-                let info = self.source_manager.get_source_info(Span::from_usize(start, end));
-                self.diagnostics.builder()
-                    .report(DiagnosticLevel::Error, "Unterminated character literal", info, None)
-                    .add_error("Unterminated character literal", Some(self.source_manager.fix_span(Span::from_usize(start, end))))
+                let info = self
+                    .source_manager
+                    .get_source_info(Span::from_usize(start, end));
+                self.diagnostics
+                    .builder()
+                    .report(
+                        DiagnosticLevel::Error,
+                        "Unterminated character literal",
+                        info,
+                        None,
+                    )
+                    .add_error(
+                        "Unterminated character literal",
+                        Some(self.source_manager.fix_span(Span::from_usize(start, end))),
+                    )
                     .commit();
                 break;
             }
 
-            let ch = unsafe {
-                ch.unwrap_unchecked()
-            };
+            let ch = unsafe { ch.unwrap_unchecked() };
 
             if ch == '\'' && !is_escaping {
                 end = self.cursor;
@@ -552,15 +625,29 @@ impl Lexer {
                 match ch {
                     'n' | 'r' | 't' | '0' | '\\' | '\'' | '"' | 'x' => {
                         is_escaping = false;
-                        self.next_char();   
+                        self.next_char();
                     }
                     _ => {
-                        let info = self.source_manager.get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
-                        self.diagnostics.builder()
-                            .report(DiagnosticLevel::Error, "Invalid escape sequence", info, None)
-                            .add_error("Invalid escape sequence", Some(self.source_manager.fix_span(Span::from_usize(self.cursor, self.cursor + 1))))
+                        let info = self
+                            .source_manager
+                            .get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
+                        self.diagnostics
+                            .builder()
+                            .report(
+                                DiagnosticLevel::Error,
+                                "Invalid escape sequence",
+                                info,
+                                None,
+                            )
+                            .add_error(
+                                "Invalid escape sequence",
+                                Some(
+                                    self.source_manager
+                                        .fix_span(Span::from_usize(self.cursor, self.cursor + 1)),
+                                ),
+                            )
                             .commit();
-                    }       
+                    }
                 }
             } else {
                 self.next_char();
@@ -582,14 +669,14 @@ impl Lexer {
         let start = self.cursor;
         self.skip_while(|c| c != '\n');
         let span = Span::from_usize(start, self.cursor);
-        
+
         if Some('\n') == self.peek_char() {
             self.next_char();
         }
 
         tokens.push(Token::new(kind, span));
     }
-    
+
     fn lex_multiline_comment(&mut self, tokens: &mut Vec<Token>) {
         let mut nest_level = 1;
         let mut star_count = 1;
@@ -610,17 +697,29 @@ impl Lexer {
 
             let ch = self.peek_char();
             if ch.is_none() {
-                let info = self.source_manager.get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
-                self.diagnostics.builder()
-                    .report(DiagnosticLevel::Error, "Unterminated multi-line comment", info, None)
-                    .add_error("Unterminated multi-line comment", Some(self.source_manager.fix_span(Span::from_usize(self.cursor, self.cursor + 1))))
+                let info = self
+                    .source_manager
+                    .get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
+                self.diagnostics
+                    .builder()
+                    .report(
+                        DiagnosticLevel::Error,
+                        "Unterminated multi-line comment",
+                        info,
+                        None,
+                    )
+                    .add_error(
+                        "Unterminated multi-line comment",
+                        Some(
+                            self.source_manager
+                                .fix_span(Span::from_usize(self.cursor, self.cursor + 1)),
+                        ),
+                    )
                     .commit();
                 break;
             }
 
-            let ch = unsafe {
-                ch.unwrap_unchecked()
-            };
+            let ch = unsafe { ch.unwrap_unchecked() };
 
             if ch == '/' {
                 self.next_char();
@@ -650,14 +749,14 @@ impl Lexer {
                     continue;
                 }
             }
-            
+
             self.next_char();
         }
 
         let span = Span::from_usize(start, end);
         tokens.push(Token::new(TokenKind::MultiLineComment, span));
     }
-    
+
     fn lex_comment(&mut self, tokens: &mut Vec<Token>) {
         if self.peek_char() != Some('/') {
             return;
@@ -669,9 +768,7 @@ impl Lexer {
             return;
         }
 
-        let ch = unsafe {
-            ch.unwrap_unchecked()
-        };
+        let ch = unsafe { ch.unwrap_unchecked() };
 
         if ch == '/' {
             self.next_char();
@@ -693,15 +790,17 @@ impl Lexer {
             return false;
         }
 
-        let next = unsafe {
-            next.unwrap_unchecked()
-        };
+        let next = unsafe { next.unwrap_unchecked() };
 
         next == '/' || next == '*'
     }
 
     fn lex_back_tick(&mut self, tokens: &mut Vec<Token>) {
-        if ParenMatching::is_triple_back_tick_block(&self.source_manager.get_source(), self.cursor, b"```") {
+        if ParenMatching::is_triple_back_tick_block(
+            &self.source_manager.get_source(),
+            self.cursor,
+            b"```",
+        ) {
             let dummy = (TokenKind::Unknown, Span::from_usize(0, 0));
             let last = self.paren_balance.last().unwrap_or(&dummy);
             let span = Span::from_usize(self.cursor, self.cursor + 3);
@@ -730,7 +829,6 @@ impl Lexer {
                     self.paren_balance.push((TokenKind::TripleBackTick, span));
                 }
             }
-
         } else {
             let span = Span::from_usize(self.cursor, self.cursor + 1);
             tokens.push(Token::new(TokenKind::Backtick, span));
@@ -744,36 +842,79 @@ impl Lexer {
 
         if let Some((paren, span)) = self.paren_balance.last() {
             let paren_str = ParenMatching::to_string(kind);
-            let other_paren_str = ParenMatching::to_string(other_paren.unwrap_or(TokenKind::Unknown));
+            let other_paren_str =
+                ParenMatching::to_string(other_paren.unwrap_or(TokenKind::Unknown));
 
             if Some(*paren) != other_paren {
-                let info = self.source_manager.get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
-                self.diagnostics.builder()
-                    .report(DiagnosticLevel::Error, format!("Unmatched {token_name} '{paren_str}'"), info, None)
-                    .add_error(format!("Add a matching pair '{other_paren_str}'"), Some(self.source_manager.fix_span(Span::from_usize(self.cursor, self.cursor + 1))))
+                let info = self
+                    .source_manager
+                    .get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
+                self.diagnostics
+                    .builder()
+                    .report(
+                        DiagnosticLevel::Error,
+                        format!("Unmatched {token_name} '{paren_str}'"),
+                        info,
+                        None,
+                    )
+                    .add_error(
+                        format!("Add a matching pair '{other_paren_str}'"),
+                        Some(
+                            self.source_manager
+                                .fix_span(Span::from_usize(self.cursor, self.cursor + 1)),
+                        ),
+                    )
                     .commit();
 
                 let token_name = ParenMatching::get_token_name(*paren);
                 let info = self.source_manager.get_source_info(*span);
-                self.diagnostics.builder()
-                    .report(DiagnosticLevel::Info, format!("Change or close the last opened {token_name}"), info, None)
-                    .add_warning(format!("Last opened {token_name} '{}'", ParenMatching::to_string(*paren)), Some(self.source_manager.fix_span(*span)))
+                self.diagnostics
+                    .builder()
+                    .report(
+                        DiagnosticLevel::Info,
+                        format!("Change or close the last opened {token_name}"),
+                        info,
+                        None,
+                    )
+                    .add_warning(
+                        format!(
+                            "Last opened {token_name} '{}'",
+                            ParenMatching::to_string(*paren)
+                        ),
+                        Some(self.source_manager.fix_span(*span)),
+                    )
                     .commit();
                 return;
             }
 
             self.paren_balance.pop();
         } else {
-            let info = self.source_manager.get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
+            let info = self
+                .source_manager
+                .get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
             let paren = ParenMatching::to_string(kind);
-            let other_paren = ParenMatching::to_string(ParenMatching::get_other_pair(kind).unwrap_or(TokenKind::Unknown));
-            self.diagnostics.builder()
-                .report(DiagnosticLevel::Error, format!("Unmatched {token_name} '{paren}'"), info, None)
-                .add_error(format!("Add a matching pair '{other_paren}'"), Some(self.source_manager.fix_span(Span::from_usize(self.cursor, self.cursor + 1))))
+            let other_paren = ParenMatching::to_string(
+                ParenMatching::get_other_pair(kind).unwrap_or(TokenKind::Unknown),
+            );
+            self.diagnostics
+                .builder()
+                .report(
+                    DiagnosticLevel::Error,
+                    format!("Unmatched {token_name} '{paren}'"),
+                    info,
+                    None,
+                )
+                .add_error(
+                    format!("Add a matching pair '{other_paren}'"),
+                    Some(
+                        self.source_manager
+                            .fix_span(Span::from_usize(self.cursor, self.cursor + 1)),
+                    ),
+                )
                 .commit();
         }
     }
-    
+
     fn lex_helper(&mut self, until: Vec<char>, should_check_paren: bool) -> Vec<Token> {
         let mut tokens = Vec::new();
         loop {
@@ -786,9 +927,7 @@ impl Lexer {
                 break;
             }
 
-            let ch = unsafe {
-                ch.unwrap_unchecked()
-            };
+            let ch = unsafe { ch.unwrap_unchecked() };
 
             if ch.is_ascii_whitespace() {
                 self.skip_whitespace().map(|token| tokens.push(token));
@@ -806,13 +945,17 @@ impl Lexer {
                 break;
             }
 
-            if let (Some(token), len) = self.match_custom_operator(&self.source_manager[self.cursor..]) {
+            if let (Some(token), len) =
+                self.match_custom_operator(&self.source_manager[self.cursor..])
+            {
                 tokens.push(token);
                 self.cursor += len;
                 continue;
             }
 
-            if let (Some(token), len) = self.match_custom_keyword(&self.source_manager[self.cursor..]) {
+            if let (Some(token), len) =
+                self.match_custom_keyword(&self.source_manager[self.cursor..])
+            {
                 tokens.push(token);
                 self.cursor += len;
                 continue;
@@ -893,9 +1036,6 @@ impl Lexer {
                     tokens.push(Token::new(TokenKind::CloseBracket, span));
                     self.next_char();
                 }
-                '.' => {
-                    self.lex_dot(&mut tokens);
-                }
                 ',' => {
                     let span = self.skip_while(|c| c == ',');
                     tokens.push(Token::new(TokenKind::Comma, span));
@@ -909,7 +1049,8 @@ impl Lexer {
                     tokens.push(Token::new(TokenKind::Colon, span));
                 }
                 c if Identifier::is_operator_start_code_point(c) => {
-                    let span = self.skip_while(|c| Identifier::is_operator_continuation_code_point(c));
+                    let span =
+                        self.skip_while(|c| Identifier::is_operator_continuation_code_point(c));
                     tokens.push(Token::new(TokenKind::Operator, span));
                 }
                 '"' => {
@@ -919,12 +1060,12 @@ impl Lexer {
                     self.lex_character_literal(&mut tokens);
                 }
                 '@' => {
-                    let span = Span::from_usize(self.cursor , self.cursor + 1);
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
                     tokens.push(Token::new(TokenKind::AtSign, span));
                     self.next_char();
                 }
                 '\\' => {
-                    let span = Span::from_usize(self.cursor , self.cursor + 1);
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
                     tokens.push(Token::new(TokenKind::Backslash, span));
                     self.next_char();
                 }
@@ -933,8 +1074,14 @@ impl Lexer {
                 }
                 _ => {
                     self.check_balanced_paren(&until);
-                    tokens.iter().for_each(|token| println!("{}", token.to_string(&self.source_manager)));
-                    todo!("Implement the rest of the lexer: {} | {:?}", self.cursor, ch)
+                    tokens
+                        .iter()
+                        .for_each(|token| println!("{}", token.to_string(&self.source_manager)));
+                    todo!(
+                        "Implement the rest of the lexer: {} | {:?}",
+                        self.cursor,
+                        ch
+                    )
                 }
             }
         }
@@ -946,12 +1093,13 @@ impl Lexer {
         tokens
     }
 
-    fn match_custom_operator(&self, source: &[u8]) -> (Option<Token>, usize){
+    fn match_custom_operator(&self, source: &[u8]) -> (Option<Token>, usize) {
         let mut valid_op = None;
         let mut len = 0;
 
         for op in self.custom_operators.iter() {
-            let bytes = op.identifier.as_str().as_bytes();
+            let bytes = op.to_str(&self.source_manager);
+            let bytes = bytes.as_bytes();
             if bytes.len() > source.len() {
                 continue;
             }
@@ -959,7 +1107,10 @@ impl Lexer {
             let start = self.cursor;
             let end = start + bytes.len();
             if bytes == source {
-                valid_op = Some(Token::new(TokenKind::Operator, Span::from_usize(start, end)));
+                valid_op = Some(Token::new(
+                    TokenKind::Operator,
+                    Span::from_usize(start, end),
+                ));
                 len = bytes.len();
                 break;
             }
@@ -973,7 +1124,7 @@ impl Lexer {
         let mut len = 0;
 
         for kw in self.custom_keywords.iter() {
-            let bytes = kw.identifier.as_str().as_bytes();
+            let bytes = kw.to_str(&self.source_manager).as_bytes();
             if bytes.len() > source.len() {
                 continue;
             }
@@ -981,7 +1132,10 @@ impl Lexer {
             let start = self.cursor;
             let end = start + bytes.len();
             if bytes == source {
-                valid_kw = Some(Token::new(TokenKind::CustomKeyword, Span::from_usize(start, end)));
+                valid_kw = Some(Token::new(
+                    TokenKind::CustomKeyword,
+                    Span::from_usize(start, end),
+                ));
                 len = bytes.len();
                 break;
             }
@@ -994,11 +1148,20 @@ impl Lexer {
         let mut tokens: Vec<Token> = Vec::new();
         let mut operator_found = false;
 
-        let inside_triple_back_tick = self.paren_balance.iter().any(|(token, _)| token == &TokenKind::TripleBackTick);
+        let inside_triple_back_tick = self
+            .paren_balance
+            .iter()
+            .any(|(token, _)| token == &TokenKind::TripleBackTick);
         if inside_triple_back_tick {
             let info = self.source_manager.get_source_info(operator_span);
-            self.diagnostics.builder()
-                .report(DiagnosticLevel::Error, "Custom operator is not allowed inside code block", info, None)
+            self.diagnostics
+                .builder()
+                .report(
+                    DiagnosticLevel::Error,
+                    "Custom operator is not allowed inside code block",
+                    info,
+                    None,
+                )
                 .commit();
             return tokens;
         }
@@ -1009,9 +1172,7 @@ impl Lexer {
                 break;
             }
 
-            let ch = unsafe {
-                ch.unwrap_unchecked()
-            };
+            let ch = unsafe { ch.unwrap_unchecked() };
 
             if ch.is_ascii_whitespace() {
                 self.skip_whitespace().map(|token| tokens.push(token));
@@ -1021,40 +1182,13 @@ impl Lexer {
             // operator ('operator') { ... }
 
             match ch {
-                c if Identifier::is_operator_start_code_point(c) || is_valid_identifier_start_code_point(c) => {
-                    let span = if is_valid_identifier_start_code_point(c) {
-                        self.skip_while(|c| is_valid_identifier_continuation_code_point(c))
-                    } else {
-                        self.skip_while(|c| Identifier::is_operator_continuation_code_point(c))
-                    };
-                    let slice = &self.source_manager[span];
-                    tokens.push(Token::new(TokenKind::Operator, span));
-                    let dup = self.custom_operators.iter().filter(|op| op.identifier.as_str().as_bytes() == slice).last();
-                    let is_invalid = dup.is_some() ||
-                        slice == b"." || slice == b"...";
-                    if is_invalid {
-                        let info = format!("The operator '{}' is already defined", std::str::from_utf8(slice).unwrap());
-                        self.diagnostics.builder()
-                            .report(DiagnosticLevel::Error, "Redefinition of operator is not allowed", self.source_manager.get_source_info(span), None)
-                            .add_error(info, Some(self.source_manager.fix_span(span)))
-                            .commit();
-                        if let Some(dup) = dup {
-                            self.diagnostics.builder()
-                                .report(DiagnosticLevel::Note, "Previous definition", self.source_manager.get_source_info(dup.span), None)
-                                .add_note(format!("The operator '{}' is already defined", std::str::from_utf8(slice).unwrap()), Some(self.source_manager.fix_span(dup.span)))
-                                .commit();
-                        }
-                        continue;
-                    }
-                    let identifier = Identifier::new(std::str::from_utf8(slice).unwrap().to_string());
-                    self.custom_operators.push(CustomIdentifier { identifier, span });
-                    operator_found = true;
-                }
                 '(' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
                     self.paren_balance.push((TokenKind::OpenParen, span));
                     tokens.push(Token::new(TokenKind::OpenParen, span));
                     self.next_char();
+
+                    self.skip_whitespace().map(|token| tokens.push(token));
                 }
                 ')' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
@@ -1063,6 +1197,108 @@ impl Lexer {
                     self.next_char();
                     break;
                 }
+                _ if is_valid_operator_start_code_point(ch) => {
+                    let start = self.cursor;
+                    self.next_char();
+                    let mut span = self.skip_while(|c| {
+                        is_valid_operator_continuation_code_point(c) || c.is_ascii_whitespace()
+                    });
+                    span.start = start as u32;
+                    span = span.trim(&self.source_manager);
+
+                    if span.is_empty() {
+                        self.diagnostics
+                            .builder()
+                            .report(
+                                DiagnosticLevel::Error,
+                                "Expecting an operator after 'operator'",
+                                self.source_manager.get_source_info(operator_span),
+                                None,
+                            )
+                            .commit();
+                        break;
+                    }
+                    let slice = &self.source_manager[span];
+                    let mut underscore: [Span; 3] = [Span::default(); 3];
+
+                    let underscores_count = slice.iter().filter(|c| **c == b'_').count();
+                    if underscores_count > 2 {
+                        let info = self.source_manager.get_source_info(span);
+                        self.diagnostics
+                            .builder()
+                            .report(DiagnosticLevel::Error, "Invalid operator", info, None)
+                            .add_error(
+                                "Max two underscores are allowed",
+                                Some(self.source_manager.fix_span(span)),
+                            )
+                            .commit();
+                        break;
+                    }
+
+                    let slice_iter = slice.iter().filter(|c| !c.is_ascii_whitespace()).enumerate();
+                    let slice_len = slice_iter.clone().count();
+
+                    if slice_len == underscores_count {
+                        let info = self.source_manager.get_source_info(span);
+                        self.diagnostics
+                            .builder()
+                            .report(DiagnosticLevel::Error, "Invalid operator", info, None)
+                            .add_error(
+                                "Operator cannot be empty",
+                                Some(self.source_manager.fix_span(span)),
+                            )
+                            .commit();
+                        break;
+                    }
+
+                    for (index, byte) in slice_iter {
+                        if *byte == b'_' {
+                            if index == 0 {
+                                underscore[0] = Span::from_usize(start + index, start + index + 1);
+                            } else if index == slice_len - 1 {
+                                underscore[2] = Span::from_usize(start + index, start + index + 1);
+                            } else {
+                                underscore[1] = Span::from_usize(start + index, start + index + 1);
+                            }
+                        }
+                    }
+
+                    let is_start = !underscore[0].is_empty();
+                    let is_middle = !underscore[1].is_empty();
+                    let is_end = !underscore[2].is_empty();
+
+                    if is_middle {
+                        let mid_span = underscore[1];
+                        let left_span = Span::new(span.start, mid_span.start).trim(&self.source_manager);
+                        let right_span = Span::new(mid_span.end, span.end).trim(&self.source_manager);
+                        let op = CustomOperator::Compound {
+                            open: Identifier::new(left_span),
+                            close: Identifier::new(right_span),
+                            span: span.trim(&self.source_manager),
+                        };
+                        self.custom_operators.push(op);
+                    } else if is_start && is_end {
+                        let op_span = Span::new(underscore[0].end, underscore[2].start).trim(&self.source_manager);
+                        let op = CustomOperator::Infix(Identifier::new(op_span));
+                        self.custom_operators.push(op);
+                    } else if is_start {
+                        let op_span =
+                            Span::new(underscore[0].end, (start + slice.len()) as u32).trim(&self.source_manager);
+                        let op = CustomOperator::Prefix(Identifier::new(op_span));
+                        self.custom_operators.push(op);
+                    } else if is_end {
+                        let op_span = Span::new(start as u32, underscore[2].start).trim(&self.source_manager);
+                        let op = CustomOperator::Postfix(Identifier::new(op_span));
+                        self.custom_operators.push(op);
+                    } else {
+                        let span = span.trim(&self.source_manager);
+                        let op = CustomOperator::Unknown(Identifier::new(span));
+                        self.custom_operators.push(op);
+                    }
+
+                    operator_found = true;
+                }
+
                 _ => {
                     break;
                 }
@@ -1071,8 +1307,14 @@ impl Lexer {
 
         if !operator_found {
             let info = self.source_manager.get_source_info(operator_span);
-            self.diagnostics.builder()
-                .report(DiagnosticLevel::Error, format!("Expecting an operator or identifier after 'operator'"), info, None)
+            self.diagnostics
+                .builder()
+                .report(
+                    DiagnosticLevel::Error,
+                    format!("Expecting an operator or identifier after 'operator'"),
+                    info,
+                    None,
+                )
                 .commit();
         }
 
@@ -1083,11 +1325,20 @@ impl Lexer {
         let mut tokens: Vec<Token> = Vec::new();
         let mut keyword_found = false;
 
-        let inside_triple_back_tick = self.paren_balance.iter().any(|(token, _)| token == &TokenKind::TripleBackTick);
+        let inside_triple_back_tick = self
+            .paren_balance
+            .iter()
+            .any(|(token, _)| token == &TokenKind::TripleBackTick);
         if inside_triple_back_tick {
             let info = self.source_manager.get_source_info(keyword_span);
-            self.diagnostics.builder()
-                .report(DiagnosticLevel::Error, "Custom keyword is not allowed inside code block", info, None)
+            self.diagnostics
+                .builder()
+                .report(
+                    DiagnosticLevel::Error,
+                    "Custom keyword is not allowed inside code block",
+                    info,
+                    None,
+                )
                 .commit();
             return tokens;
         }
@@ -1098,9 +1349,7 @@ impl Lexer {
                 break;
             }
 
-            let ch = unsafe {
-                ch.unwrap_unchecked()
-            };
+            let ch = unsafe { ch.unwrap_unchecked() };
 
             if ch.is_ascii_whitespace() {
                 self.skip_whitespace().map(|token| tokens.push(token));
@@ -1114,24 +1363,49 @@ impl Lexer {
                     let span = self.skip_while(|c| is_valid_identifier_continuation_code_point(c));
                     let slice = &self.source_manager[span];
                     tokens.push(Token::new(TokenKind::CustomKeyword, span));
-                    let dup = self.custom_keywords.iter().filter(|op| op.identifier.as_str().as_bytes() == slice).last();
+                    let dup = self
+                        .custom_keywords
+                        .iter()
+                        .filter(|op| op.to_str(&self.source_manager).as_bytes() == slice)
+                        .last();
                     let is_invalid = dup.is_some();
                     if is_invalid {
-                        let info = format!("The keyword '{}' is already defined", std::str::from_utf8(slice).unwrap());
-                        self.diagnostics.builder()
-                            .report(DiagnosticLevel::Error, "Redefinition of keyword is not allowed", self.source_manager.get_source_info(span), None)
+                        let info = format!(
+                            "The keyword '{}' is already defined",
+                            std::str::from_utf8(slice).unwrap()
+                        );
+                        self.diagnostics
+                            .builder()
+                            .report(
+                                DiagnosticLevel::Error,
+                                "Redefinition of keyword is not allowed",
+                                self.source_manager.get_source_info(span),
+                                None,
+                            )
                             .add_error(info, Some(self.source_manager.fix_span(span)))
                             .commit();
                         if let Some(dup) = dup {
-                            self.diagnostics.builder()
-                                .report(DiagnosticLevel::Note, "Previous definition", self.source_manager.get_source_info(dup.span), None)
-                                .add_note(format!("The keyword '{}' is already defined", std::str::from_utf8(slice).unwrap()), Some(self.source_manager.fix_span(dup.span)))
+                            self.diagnostics
+                                .builder()
+                                .report(
+                                    DiagnosticLevel::Note,
+                                    "Previous definition",
+                                    self.source_manager.get_source_info(dup.span),
+                                    None,
+                                )
+                                .add_note(
+                                    format!(
+                                        "The keyword '{}' is already defined",
+                                        std::str::from_utf8(slice).unwrap()
+                                    ),
+                                    Some(self.source_manager.fix_span(dup.span)),
+                                )
                                 .commit();
                         }
                         continue;
                     }
-                    let identifier = Identifier::new(std::str::from_utf8(slice).unwrap().to_string());
-                    self.custom_keywords.push(CustomIdentifier { identifier, span });
+                    self.custom_keywords
+                        .push(Identifier::new(span));
                     keyword_found = true;
                 }
                 '(' => {
@@ -1153,8 +1427,14 @@ impl Lexer {
 
         if !keyword_found {
             let info = self.source_manager.get_source_info(keyword_span);
-            self.diagnostics.builder()
-                .report(DiagnosticLevel::Error, format!("Expecting an identifier after 'keyword'"), info, None)
+            self.diagnostics
+                .builder()
+                .report(
+                    DiagnosticLevel::Error,
+                    format!("Expecting an identifier after 'keyword'"),
+                    info,
+                    None,
+                )
                 .commit();
         }
 
@@ -1181,5 +1461,4 @@ impl Lexer {
 
         tokens
     }
-
 }

@@ -1,3 +1,7 @@
+use std::borrow::Cow;
+
+use crate::eoc::{ast::identifier::Identifier, utils::{source_manager, span::Span}};
+
 use super::token::TokenKind;
 
 pub(crate) fn valid_utf8_character_with_char_len(source: &[u8]) -> (Option<char>, usize) {
@@ -153,3 +157,51 @@ impl ParenMatching {
     }
 
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum CustomOperator {
+    Unknown(Identifier),
+    Infix(Identifier),
+    Postfix(Identifier),
+    Prefix(Identifier),
+    Compound{
+        open: Identifier,
+        close: Identifier,
+        span: Span
+    }
+}
+
+
+impl CustomOperator {
+    pub(crate) fn to_str<'a>(&'a self, source_manager: &'a source_manager::SourceManager) -> Cow<'a, str> {
+        match self {
+            CustomOperator::Unknown(id) => Cow::Borrowed(id.to_str(source_manager)),
+            CustomOperator::Infix(id) => Cow::Borrowed(id.to_str(source_manager)),
+            CustomOperator::Postfix(id) => Cow::Borrowed(id.to_str(source_manager)),
+            CustomOperator::Prefix(id) => Cow::Borrowed(id.to_str(source_manager)),
+            CustomOperator::Compound{open, close, ..} => Cow::Owned(format!("{}_{}", open.to_str(source_manager), close.to_str(source_manager)))
+        }
+    }
+
+    pub(crate) fn to_debug_string(&self, source_manager: &source_manager::SourceManager) -> String {
+        match self {
+            CustomOperator::Unknown(id) => format!("Unknown({})", id.to_str(source_manager)),
+            CustomOperator::Infix(id) => format!("Infix({})", id.to_str(source_manager)),
+            CustomOperator::Postfix(id) => format!("Postfix({})", id.to_str(source_manager)),
+            CustomOperator::Prefix(id) => format!("Prefix({})", id.to_str(source_manager)),
+            CustomOperator::Compound{open, close, span} => {
+                let id = std::str::from_utf8(&source_manager[*span]).unwrap();
+                format!("Compound('{}' '{}' => '{}')", open.to_str(source_manager), close.to_str(source_manager), id)
+            }
+        }
+    }
+}
+
+pub(crate) fn is_valid_operator_start_code_point(ch: char) -> bool {
+    Identifier::is_operator_start_code_point(ch) || is_valid_identifier_start_code_point(ch) || ch == '[' || ch == '_'
+}
+
+pub(crate) fn is_valid_operator_continuation_code_point(ch: char) -> bool {
+    Identifier::is_operator_continuation_code_point(ch) || is_valid_identifier_continuation_code_point(ch) || ch == ']' || ch == '_'
+}
+

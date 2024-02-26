@@ -32,7 +32,6 @@ pub(crate) enum TokenKind {
     Is, // is
     Defer, // defer
     Match, // match
-    Ellipsis, // ...
     KwOperator, // operator
     Operator, // +, -, ..
     Enum, // enum
@@ -59,7 +58,6 @@ pub(crate) enum TokenKind {
     OpenBracket, // [
     CloseBracket, // ]
     Comma, // ,
-    Dot, // .
     Colon, // :
     Semicolon, // ;
     Arrow, // ->
@@ -155,7 +153,6 @@ impl Token {
             TokenKind::OpenBracket |
             TokenKind::CloseBracket |
             TokenKind::Comma |
-            TokenKind::Dot |
             TokenKind::Colon |
             TokenKind::Semicolon |
             TokenKind::Arrow |
@@ -200,10 +197,6 @@ impl Token {
 
     pub(crate) fn is_comma(&self) -> bool {
         self.kind == TokenKind::Comma
-    }
-
-    pub(crate) fn is_dot(&self) -> bool {
-        self.kind == TokenKind::Dot
     }
 
     pub(crate) fn is_colon(&self) -> bool {
@@ -281,11 +274,7 @@ impl Token {
     pub(crate) fn is_close_bracket(&self) -> bool {
         self.kind == TokenKind::CloseBracket
     }
-
-    pub(crate) fn is_ellipsis(&self) -> bool {
-        self.kind == TokenKind::Ellipsis
-    }
-
+    
     pub(crate) fn is_operator_keyword(&self) -> bool {
         self.kind == TokenKind::KwOperator
     }
@@ -435,8 +424,7 @@ impl Token {
             TokenKind::Dollar |
             TokenKind::CustomKeyword |
             TokenKind::KwKeyword |
-            TokenKind::CompileTime |
-            TokenKind::Ellipsis => true,
+            TokenKind::CompileTime => true,
             _ => false,
         }
     }
@@ -486,7 +474,6 @@ impl From<&[u8]> for TokenKind {
             b"is" => TokenKind::Is,
             b"defer" => TokenKind::Defer,
             b"match" => TokenKind::Match,
-            b"..." => TokenKind::Ellipsis,
             b"operator" => TokenKind::KwOperator,
             b"enum" => TokenKind::Enum,
             b"public" => TokenKind::Public,
