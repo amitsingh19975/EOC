@@ -1,6 +1,11 @@
+operator (.) {
+    precedence: 2,
+    type: .infix
+}
+
 operator (-+-) {
     precedence: 2,
     type: .infix
 }
 
-(1 -+- 2)
+(a.-+- 2)
