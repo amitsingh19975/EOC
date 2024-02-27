@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use super::{filesystem::MappedFile, source_manager::{self, SourceManager}};
+use super::{filesystem::MappedFile, source_manager::SourceManager};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub(crate) struct Span {

@@ -1,8 +1,6 @@
 #![allow(dead_code)]
 
-use std::fmt::Display;
-
-use crate::eoc::utils::{source_manager::{self, SourceManager}, span::Span};
+use crate::eoc::utils::{source_manager::SourceManager, span::Span};
 
 const OPERATOR_CHARS: &'static str = "/=-+*%<>!&|^~.?";
 
