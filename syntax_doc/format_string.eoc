@@ -1,0 +1,75 @@
+interface Display {
+    comptime fn isCustomArgAllowed(options: [(String, span: Span)]) => Diagnostic.new()
+    fn format(in self, fmt: (Writer, FormatArgs)) throws;
+}
+
+struct Date {
+    day: u8,
+    month: u8,
+    year: u16
+}
+
+extension Date {
+    fn new(day: u8, month: u8, year: u16) => Self {
+        day,
+        month,
+        year
+    }
+}
+
+struct Student {
+    name: String,
+    dob: Date
+}
+
+extension Date: Display {
+    comptime fn isCustomArgAllowed(options: [(String, span: Span)]) -> Diagnostic {
+        var diagnostic = Diagnostic.new()
+
+        if options.is_empty() {
+            return .new()
+        }
+
+        if options.len() != 1 {
+            diagnostic.builder()
+                .report(.error, options[1].span, "Date format accepts only 1 or no argument")
+                .commit()
+            return diagnostic
+        }
+
+        let (opt, span) = options[0]
+        match opt {
+            "%d" | "%m" | "%y" => return
+            _ => {
+                diagnostic.builder()
+                    .report(.error, span, "{opt:quoted} is not allowed.")
+                    .commit();
+            }
+        }
+
+        return diagnostic
+    }
+
+    fn format(in self, fmt (writer, args): (Writer, FormatArgs)) throws {
+        match args.custom[0] {
+            "%d" => writer.write(self.date)?,
+            "%n" => writer.write(self.month)?,
+            "%y" => writer.write(self.year)?,
+            _ => writer.write("{self.date}-{self.month}-{self.year}")?,
+        }
+    }
+}
+
+extension Student: Display {
+    fn format(in self, fmt (writer, _): (Writer, FormatArgs)) throws {
+        writer.write("Student(name: {self.name:quoted}, dob: {self.dob:%d})")
+    }
+}
+
+let s = Student {
+    name: "Test",
+    dob: Date.new(day: 1, month: 2, year: 2024)
+};
+
+print("{s}") // Student(name: "Test", dob: 1)
+
