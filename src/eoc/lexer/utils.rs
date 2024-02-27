@@ -205,3 +205,17 @@ pub(crate) fn is_valid_operator_continuation_code_point(ch: char) -> bool {
     Identifier::is_operator_continuation_code_point(ch) || is_valid_identifier_continuation_code_point(ch) || ch == ']' || ch == '_'
 }
 
+pub(crate) fn escape_string(source: &str) -> String {
+    let mut result = String::new();
+    for ch in source.chars() {
+        match ch {
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            '\\' => result.push_str("\\\\"),
+            '"' => result.push_str("\\\""),
+            _ => result.push(ch),
+        }
+    }
+    result
+}
