@@ -403,14 +403,14 @@ impl Lexer {
         return true;
     }
 
-    fn lex_number(&mut self, tokens: &mut Vec<Token>) {
+    fn lex_number(&mut self, tokens: &mut Vec<Token>) -> bool {
         let start = self.cursor;
         if self.lex_integer(tokens) {
-            return;
+            return true;
         }
 
         self.cursor = start;
-        self.lex_floating_point(tokens);
+        self.lex_floating_point(tokens)
     }
 
     fn lex_formatting_string(&mut self) -> Vec<Token> {
@@ -966,20 +966,40 @@ impl Lexer {
                 break;
             }
 
-            if let (Some(token), len) =
-                self.match_custom_operator(&self.source_manager[self.cursor..])
-            {
-                tokens.push(token);
-                self.cursor += len;
-                continue;
+            let mut should_run_custom_match = true;
+
+            if ch == '.' {
+                let current = self.cursor;
+                self.next_char();
+                if let Some(c) = self.peek_char() {
+                    if c.is_ascii_digit() {
+                        should_run_custom_match = false;
+                    }
+                }
+                
+                self.cursor = current;
+                
+                if self.cursor != 0 && !self.source_manager.get_source()[self.cursor - 1].is_ascii_whitespace() {
+                    should_run_custom_match = true;
+                }
             }
 
-            if let (Some(token), len) =
-                self.match_custom_keyword(&self.source_manager[self.cursor..])
-            {
-                tokens.push(token);
-                self.cursor += len;
-                continue;
+            if should_run_custom_match {
+                if let (Some(token), len) =
+                    self.match_custom_operator(&self.source_manager[self.cursor..])
+                {
+                    tokens.push(token);
+                    self.cursor += len;
+                    continue;
+                }
+    
+                if let (Some(token), len) =
+                    self.match_custom_keyword(&self.source_manager[self.cursor..])
+                {
+                    tokens.push(token);
+                    self.cursor += len;
+                    continue;
+                }
             }
 
             match ch {
@@ -989,7 +1009,7 @@ impl Lexer {
                 c if is_valid_identifier_start_code_point(c) => {
                     self.lex_identifier(&mut tokens, true);
                 }
-                c if c.is_ascii_digit() => {
+                c if c.is_ascii_digit() || !should_run_custom_match => {
                     self.lex_number(&mut tokens);
                 }
                 '$' => {
