@@ -425,16 +425,19 @@ impl Lexer {
         let mut is_escaping = false;
         let mut is_escaping_formatting = false;
 
-        tokens.push(Token::new(
+        let start_format_token = Token::new(
             TokenKind::StartFormattingString,
             Span::from_usize(self.cursor, self.cursor + 1),
-        ));
+        );
 
         let start_quote_span = Span::from_usize(self.cursor, self.cursor + 1);
 
         self.next_char();
         let mut start = self.cursor;
         let mut end = self.cursor;
+
+        let mut found_format_string = false;
+        let mut format_tokens = Vec::new();
 
         loop {
             let ch = self.peek_char();
@@ -461,6 +464,8 @@ impl Lexer {
                     self.next_char();
                     continue;
                 }
+                found_format_string = true;
+
                 let old_parens = self.paren_balance.clone();
                 self.paren_balance.clear();
                 self.paren_balance
@@ -469,8 +474,8 @@ impl Lexer {
 
                 {
                     let span = Span::from_usize(start, end);
-                    tokens.push(Token::new(TokenKind::String, span));
-                    let format_tokens = self.lex_formatting_string();
+                    format_tokens.push(Token::new(TokenKind::String, span));
+                    let temp_format_tokens = self.lex_formatting_string();
 
                     if self.peek_char() != Some('}') {
                         let last_seen_quote = format_tokens
@@ -502,7 +507,7 @@ impl Lexer {
                     } else {
                         self.next_char();
                     }
-                    tokens.extend(format_tokens);
+                    format_tokens.extend(temp_format_tokens);
                     self.expect_block_or_paren(TokenKind::CloseBrace);
                 }
                 self.paren_balance = old_parens;
@@ -562,16 +567,34 @@ impl Lexer {
             }
         }
 
+        if found_format_string {
+            tokens.push(start_format_token);
+        }
+
+        format_tokens = format_tokens.into_iter().filter(|t| !t.span.is_empty()).collect();
+        tokens.extend(format_tokens);
+        
         let span = Span::from_usize(start, end);
         if start_quote_span == span || self.peek_char() != Some('"') {
             return;
         }
+
+        self.next_char();
+
+        if span.is_empty() {
+            return;
+        }
+        
+        if !found_format_string {
+            tokens.push(Token::new(TokenKind::String, span));
+            return;
+        }
+
         tokens.push(Token::new(TokenKind::String, span));
         tokens.push(Token::new(
             TokenKind::EndFormattingString,
             Span::from_usize(self.cursor, self.cursor + 1),
         ));
-        self.next_char();
     }
 
     fn lex_character_literal(&mut self, tokens: &mut Vec<Token>) {
@@ -685,8 +708,6 @@ impl Lexer {
             star_count += 1;
             self.next_char();
         }
-
-        println!("star_count: {} | '{:#?}'", star_count, self.peek_char());
 
         let start = self.cursor;
         let mut end = self.cursor;
