@@ -61,6 +61,20 @@ impl Lexer {
         &self.diagnostics
     }
 
+    fn save_cursor(&mut self) {
+        self.rewind_stack.push(self.cursor);
+    }
+
+    fn pop_cursor(&mut self) {
+        self.rewind_stack.pop();
+    }
+
+    fn rewind_cursor(&mut self) {
+        if let Some(cursor) = self.rewind_stack.pop() {
+            self.cursor = cursor;
+        }
+    }
+
     fn next_char(&mut self) -> Option<char> {
         let (ch, len) = self.source_manager.get_char(self.cursor);
         self.cursor = (self.cursor + len).min(self.source_manager.len());
@@ -176,12 +190,12 @@ impl Lexer {
             return false;
         }
 
-        let temp = self.cursor;
+        self.save_cursor();
 
         while let Some(ch) = self.peek_char() {
             match ch {
                 'e' | 'E' | '.' | 'p' | 'P' => {
-                    self.cursor = temp;
+                    self.rewind_cursor();
                     return false;
                 }
                 ch if ch.is_whitespace() => break,
@@ -191,7 +205,7 @@ impl Lexer {
             }
         }
 
-        self.cursor = temp;
+        self.rewind_cursor();
 
         let ch = self.peek_char();
         if ch.is_none() {
