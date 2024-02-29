@@ -11,7 +11,7 @@ use super::{
     utils::{
         diagnostic::{Diagnostic, DiagnosticLevel, DiagnosticReporter},
         source_manager::SourceManager,
-        span::Span,
+        span::Span, trie::Trie,
     },
 };
 use std::{path::Path, vec};
@@ -25,6 +25,9 @@ pub(crate) struct Lexer {
     diagnostics: Diagnostic,
     custom_operators: Vec<CustomOperator>,
     custom_keywords: Vec<Identifier>,
+    custom_operators_trie: Trie<u8, usize>,
+    custom_keywords_trie: Trie<u8, usize>,
+    rewind_stack: Vec<usize>,
 }
 
 impl Lexer {
@@ -36,6 +39,9 @@ impl Lexer {
             diagnostics: diagnostic.into(),
             custom_operators: Vec::new(),
             custom_keywords: Vec::new(),
+            rewind_stack: Vec::new(),
+            custom_operators_trie: Trie::new(),
+            custom_keywords_trie: Trie::new(),
         }
     }
 
@@ -1138,21 +1144,25 @@ impl Lexer {
         let mut valid_op = None;
         let mut len = 0;
 
-        for op in self.custom_operators.iter() {
-            let bytes = op.to_str(&self.source_manager);
-            let bytes = bytes.as_bytes();
-            if bytes.len() > source.len() {
-                continue;
-            }
-            let source = &source[..bytes.len()];
-            let start = self.cursor;
-            let end = start + bytes.len();
-            if bytes == source {
+        if source.len() == 0 {
+            return (valid_op, len);
+        }
+
+        let mut start = 0;
+        let mut node = &self.custom_operators_trie;
+        while let Some(temp_node) = node.try_match(&source[start..(start + 1)]) {
+            start += 1;
+            node = temp_node;
+
+            if node.is_terminal() {
                 valid_op = Some(Token::new(
                     TokenKind::Operator,
-                    Span::from_usize(start, end),
+                    Span::from_usize(self.cursor, self.cursor + start),
                 ));
-                len = bytes.len();
+                len = start;
+            }
+
+            if source.len() < (start + 1) {
                 break;
             }
         }
@@ -1163,21 +1173,27 @@ impl Lexer {
     fn match_custom_keyword(&self, source: &[u8]) -> (Option<Token>, usize) {
         let mut valid_kw = None;
         let mut len = 0;
+        
+        if source.len() == 0 {
+            return (valid_kw, len);
+        }
 
-        for kw in self.custom_keywords.iter() {
-            let bytes = kw.to_str(&self.source_manager).as_bytes();
-            if bytes.len() > source.len() {
-                continue;
-            }
-            let source = &source[..bytes.len()];
-            let start = self.cursor;
-            let end = start + bytes.len();
-            if bytes == source {
+        let mut start = 0;
+        let mut node = &self.custom_keywords_trie;
+
+        while let Some(temp_node) = node.try_match(&source[start..(start + 1)]) {
+            start += 1;
+            node = temp_node;
+
+            if node.is_terminal() {
                 valid_kw = Some(Token::new(
                     TokenKind::CustomKeyword,
-                    Span::from_usize(start, end),
+                    Span::from_usize(self.cursor, self.cursor + start),
                 ));
-                len = bytes.len();
+                len = start;
+            }
+
+            if source.len() < (start + 1) {
                 break;
             }
         }
@@ -1337,6 +1353,10 @@ impl Lexer {
                         self.custom_operators.push(op);
                     }
 
+                    if let Some(last) = self.custom_operators.last() {
+                        self.custom_operators_trie.insert(last.to_str(&self.source_manager).as_bytes(), self.custom_operators.len() - 1);
+                    }
+
                     operator_found = true;
                 }
 
@@ -1447,6 +1467,7 @@ impl Lexer {
                     }
                     self.custom_keywords
                         .push(Identifier::new(span));
+                    self.custom_keywords_trie.insert(slice, self.custom_keywords.len() - 1);
                     keyword_found = true;
                 }
                 '(' => {
