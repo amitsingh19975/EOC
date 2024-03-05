@@ -83,10 +83,30 @@ pub(crate) enum TokenKind {
     Newline,
     EndOfFile,
 
+    // ========= Start Ebnf ==========
+
+    Terminal, // This is for the terminal token used in the EBNF grammar. Example: `'0'` in `A = '0'`
+    NonTerminal, // This is for the non-terminal token used in the EBNF grammar. Example: `A` in `A = B`
+    Pipe, // This is for the pipe token used in the EBNF grammar. Example: `|` in `A = B | C`
+    Asterisk, // This is for the asterisk token used in the EBNF grammar. Example: `*` in `A = B* C`
+    Plus, // This is for the plus token used in the EBNF grammar. Example: `+` in `A = B+ C`
+    Equal, // This is for the equal token used in the EBNF grammar. Example: `=` in `A = '0'`
+    Dot, // This is for the dot token used in the EBNF grammar. Example: `.` in `A = B . C`
+    Comment, // This is a catch-all for any comment
+    Exception, // This is for the exception token used in the EBNF grammar. Example: `-` in `A = B - C`
+    LeftExtend, // This is for the extend token used in the EBNF grammar. Example: `<<` in `A <+= C`
+    RightExtend, // This is for the extend token used in the EBNF grammar. Example: `<<` in `A +>= C`
+    Definition, // This is for the definition token used in the EBNF grammar. Example: `::=` in `A ::= B`
+    Range, // This is for the range token used in the EBNF grammar. Example: `..` in `A = B .. C`
+    RangeEqual, // This is for the range equal token used in the EBNF grammar. Example: `..=` in `A = B ..= C`
+
+    // ========= End Ebnf ==========
+
+
     Unknown,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Token {
     pub(crate) kind: TokenKind,
     pub(crate) span: Span,
