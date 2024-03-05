@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use std::{ops::{Index, RangeFrom}, path::{Path, PathBuf}};
-use crate::eoc::lexer::utils::valid_utf8_character_with_char_len;
+use crate::eoc::lexer::utils::byte_to_char;
 
 use super::{filesystem::MappedFile, span::Span};
 
@@ -112,20 +112,7 @@ impl SourceManager {
 
     pub(crate) fn get_char(&self, index: usize) -> (Option<char>, usize) {
         let source = self.source.as_slice();
-        if source.len() <= index {
-            return (None, 0);
-        }
-        if source[index] < 128 {
-            if source[index] == b'\r' {
-                if index + 1 < source.len() && source[index + 1] == b'\n' {
-                    return (Some('\n'), 2);
-                } else {
-                    return (Some('\n'), 1);
-                }
-            }
-            return (Some(source[index] as char), 1);
-        }
-        return valid_utf8_character_with_char_len(&source[index..]);
+        byte_to_char(&source[index..])
     }
 
     pub(crate) fn len(&self) -> usize {
