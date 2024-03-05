@@ -32,6 +32,12 @@ impl Span {
         self.start < other.end && other.start < self.end
     }
 
+    pub(crate) fn union(&self, other: &Self) -> Self {
+        let start = self.start.min(other.start);
+        let end = self.end.max(other.end);
+        Self::new(start, end)
+    }
+
     pub(crate) fn split_if_intersect(&self, other: &Self) -> (Self, Self) {
         if !self.is_intersecting(other) {
             return (*self, *other);
