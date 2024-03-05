@@ -758,7 +758,9 @@ impl FlattenEbnfExpr {
                     def.insert(name.clone());
                 }
                 if let Some(old_expr) = env.remove(&name) {
-                    let new_name = Self::get_unique_name(&name, env);
+                    let mut keys: HashSet<&str> = env.keys().map(|s| s.as_str()).collect();
+                    keys.insert(name.as_str());
+                    let new_name = Self::get_unique_name(&name, keys);
                     if new_expr.substitute_extend(&name, &new_name) {
                         env.insert(new_name, old_expr);
                     }
@@ -769,10 +771,10 @@ impl FlattenEbnfExpr {
         }
     }
 
-    fn get_unique_name(name: &str, env: &HashMap<String, EbnfParserEnvVariable>) -> String {
+    fn get_unique_name(name: &str, keys: HashSet<&str>) -> String {
         let mut i = 0;
-        let mut new_name = format!("{}_{i}", name);
-        while env.contains_key(&new_name) {
+        let mut new_name = name.to_owned();
+        while keys.contains(new_name.as_str()) {
             i += 1;
             new_name = format!("{}_{}", name, i);
         }
