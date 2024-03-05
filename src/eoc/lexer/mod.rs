@@ -1,7 +1,7 @@
 use crate::eoc::lexer::ebnf::ast::EbnfParser;
 
 use self::{
-    ebnf::{ast::{EbnfParserMatcher}, lexer::EbnfLexer}, token::{Token, TokenKind}, utils::{
+    ebnf::{ast::EbnfParserMatcher, lexer::EbnfLexer}, token::{Token, TokenKind}, utils::{
         is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point,
         is_valid_operator_continuation_code_point, is_valid_operator_start_code_point,
         CustomOperator, ParenMatching,
@@ -19,6 +19,7 @@ use std::{path::Path, vec};
 pub(crate) mod token;
 pub(crate) mod utils;
 pub(crate) mod ebnf;
+pub(crate) mod str_utils;
 
 pub(crate) struct Lexer {
     source_manager: SourceManager,
@@ -844,6 +845,12 @@ impl Lexer {
         let program = EbnfParser::parse(tokens, &self.source_manager, &mut self.diagnostics);
         let mut matcher = EbnfParserMatcher::new(&mut self.diagnostics);
         matcher.init(program);
+        let temp = matcher.match_expr(b"_test123", &self.source_manager);
+        if let Some((bytes, id)) = temp {
+            println!("temp: id({}) => '{}'", id, std::str::from_utf8(bytes).unwrap());
+        } else {
+            eprintln!("Error: no match");
+        }
     }
 
     fn lex_back_tick(&mut self, tokens: &mut Vec<Token>) {
