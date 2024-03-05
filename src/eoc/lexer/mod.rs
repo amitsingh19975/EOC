@@ -845,7 +845,7 @@ impl Lexer {
         let program = EbnfParser::parse(tokens, &self.source_manager, &mut self.diagnostics);
         let mut matcher = EbnfParserMatcher::new(&mut self.diagnostics);
         matcher.init(program);
-        let temp = matcher.match_expr("_testæ123 sdf asdf".as_bytes(), &self.source_manager);
+        let temp = matcher.match_expr("?testæ123 sdf asdf".as_bytes(), &self.source_manager);
         if let Some((bytes, id)) = temp {
             println!("temp: id({}) => '{}'", id, std::str::from_utf8(bytes).unwrap());
         } else {

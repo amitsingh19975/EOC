@@ -1,11 +1,5 @@
-operator (.) {
-    precedence: 2,
-    type: .infix
-}
+```lexer
 
-operator (-+-) {
-    precedence: 2,
-    type: .infix
-}
+identifier ::= '?' + identifier;
 
-(a.-+- 2)
+```
