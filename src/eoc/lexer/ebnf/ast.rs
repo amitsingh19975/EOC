@@ -789,22 +789,21 @@ impl FlattenEbnfExpr {
                     return None;
                 }
 
-                let matched = matched.unwrap();
-                let mut matched = std::str::from_utf8(matched).unwrap();
+                let mut matched = matched.unwrap();
 
                 for e in iter {
                     let mut i = 0;
-                    let count = matched.chars().count();
-                    while i < count {
-                        let end = (i + e.get_max_byte_len() as usize).min(count);
-                        let temp_source = &matched.chars().skip(end).collect::<String>();
+                    while i < matched.len() {
+                        let end = ByteToCharIter::new(&matched[i..])
+                            .utf8_len_after_skip(e.get_max_byte_len() as usize);
+                        let temp_source = &matched[i..i + end];
                         if let Some(_) =
-                            e.match_expr(temp_source.as_bytes(), env, source_manager, diagnostic)
+                            e.match_expr(temp_source, env, source_manager, diagnostic)
                         {
-                            matched = &matched[0..temp_source.len()];
+                            matched = &matched[0..i];
                             break;
                         }
-                        i += end - i;
+                        i += end;
                     }
                 }
 
@@ -812,7 +811,7 @@ impl FlattenEbnfExpr {
                     return None;
                 }
 
-                Some(matched.as_bytes())
+                Some(matched)
             }
             FlattenEbnfExpr::Extend(v, ..) => {
                 if v.is_empty() {
@@ -865,8 +864,7 @@ impl FlattenEbnfExpr {
             }
             FlattenEbnfExpr::Terminal(t) => {
                 let end = t.len_utf8();
-                
-                if end >= s.len() {
+                if end > s.len() {
                     return None;
                 }
 
