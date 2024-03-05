@@ -220,7 +220,6 @@ pub(crate) fn escape_string(source: &str) -> String {
     result
 }
 
-
 fn decode_unicode_escape_sequence_helper(source: &str) -> Option<char> {
     let mut result = 0;
     let mut i = 0;
@@ -238,7 +237,8 @@ pub(crate) fn decode_unicode_escape_sequence(source: &[u8]) -> String{
     let mut result = String::new();
     let temp_str = std::str::from_utf8(source).unwrap();
     let mut i = 0;
-    while i < temp_str.len() {
+    let count = temp_str.chars().count();
+    while i < count {
         let ch = temp_str.chars().nth(i).unwrap();
         let remaining = temp_str.len() - i;
         if ch == '\\' && remaining >= 3 {
