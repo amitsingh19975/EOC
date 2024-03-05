@@ -1,10 +1,11 @@
+use crate::eoc::lexer::ebnf::ast::EbnfParser;
+
 use self::{
-    token::{Token, TokenKind},
-    utils::{
+    ebnf::{ast::{EbnfParserMatcher}, lexer::EbnfLexer}, token::{Token, TokenKind}, utils::{
         is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point,
         is_valid_operator_continuation_code_point, is_valid_operator_start_code_point,
         CustomOperator, ParenMatching,
-    },
+    }
 };
 use super::{
     ast::identifier::Identifier,
@@ -17,6 +18,7 @@ use super::{
 use std::{path::Path, vec};
 pub(crate) mod token;
 pub(crate) mod utils;
+pub(crate) mod ebnf;
 
 pub(crate) struct Lexer {
     source_manager: SourceManager,
@@ -65,9 +67,9 @@ impl Lexer {
         self.rewind_stack.push(self.cursor);
     }
 
-    fn pop_cursor(&mut self) {
-        self.rewind_stack.pop();
-    }
+    // fn pop_cursor(&mut self) {
+    //     self.rewind_stack.pop();
+    // }
 
     fn rewind_cursor(&mut self) {
         if let Some(cursor) = self.rewind_stack.pop() {
@@ -836,7 +838,47 @@ impl Lexer {
         next == '/' || next == '*'
     }
 
+    fn parse_ebnf_lexer_block(&mut self, span: Span) {
+        let mut enbf_lexer = EbnfLexer::new(&self.source_manager, &mut self.diagnostics, span.start as usize, span.end as usize);
+        let tokens = enbf_lexer.lex();
+        let program = EbnfParser::parse(tokens, &self.source_manager, &mut self.diagnostics);
+        let mut matcher = EbnfParserMatcher::new(&mut self.diagnostics);
+        matcher.init(program);
+    }
+
     fn lex_back_tick(&mut self, tokens: &mut Vec<Token>) {
+        let lexer_block_bytes = b"```lexer";
+        if ParenMatching::is_triple_back_tick_block(
+            &self.source_manager.get_source(),
+            self.cursor,
+            lexer_block_bytes,
+        ) {
+            self.cursor += lexer_block_bytes.len();
+            let start = self.cursor;
+            loop {
+                let ch = self.peek_char();
+                if ch.is_none() {
+                    self.diagnostics.builder()
+                        .report(DiagnosticLevel::Error, "Unterminated lexer block", self.source_manager.get_source_info(Span::from_usize(self.cursor, self.cursor + 1)), None)
+                        .add_error("Try add '```' to close the lexer block", Some(self.source_manager.fix_span(Span::from_usize(self.cursor, self.cursor + 1))))
+                        .commit();
+                    break;
+                }
+
+                let ch = unsafe { ch.unwrap_unchecked() };
+
+                if ch == '`' && ParenMatching::is_triple_back_tick_block(&self.source_manager.get_source(), self.cursor, b"```") {
+                    let span = Span::from_usize(start, self.cursor);
+                    self.parse_ebnf_lexer_block(span);
+                    self.cursor += 3;
+                    break;
+                }
+
+                self.next_char();
+            }
+            return;
+        }
+
         if ParenMatching::is_triple_back_tick_block(
             &self.source_manager.get_source(),
             self.cursor,
