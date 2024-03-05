@@ -2,7 +2,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    fmt::Display,
+    fmt::{Debug, Display},
     hash::Hash,
 };
 
@@ -54,7 +54,7 @@ impl TerminalValue {
 
     pub(crate) fn len(&self) -> usize {
         match self {
-            TerminalValue::String(s) => s.len(),
+            TerminalValue::String(s) => s.chars().count(),
             TerminalValue::Char(_) => 1,
         }
     }
@@ -138,7 +138,7 @@ type EbnfExprMaxByteLen = u8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FlattenEbnfExpr {
-    Identifier(String, Option<Span>),
+    Identifier(String, EbnfExprMaxByteLen, Option<Span>),
     Alternative(
         Vec<FlattenEbnfExpr>,
         HashSet<TerminalValue>,
@@ -543,7 +543,13 @@ impl FlattenEbnfExpr {
 
     fn get_max_byte_len(&self) -> u8 {
         match self {
-            FlattenEbnfExpr::Identifier(id, ..) => id.len() as u8,
+            FlattenEbnfExpr::Identifier(id, count, ..) => {
+                if NativeCallKind::is_valid_name(id) {
+                    1
+                } else {
+                    *count
+                }
+            },
             FlattenEbnfExpr::Alternative(_, _, m)
             | FlattenEbnfExpr::Concat(_, m)
             | FlattenEbnfExpr::Extend(_, m)
@@ -569,7 +575,10 @@ impl FlattenEbnfExpr {
                 }
                 Self::Statements(statements, max_byte_len)
             }
-            EbnfExpr::Identifier(id, info) => Self::Identifier(id, info),
+            EbnfExpr::Identifier(id, info) => {
+                let count = id.chars().count() as u8;
+                Self::Identifier(id, count, info)
+            }
             EbnfExpr::BinaryExpr(op, lhs, rhs) => Self::from_binary(op, *lhs, *rhs),
             EbnfExpr::UnaryExpr(op, expr) => Self::from_unary(op, *expr),
             EbnfExpr::Variable { name, expr, is_def } => Self::Variable {
@@ -710,7 +719,16 @@ impl FlattenEbnfExpr {
         diagnostic: &mut Diagnostic,
     ) -> Option<&'a [u8]> {
         match self {
-            FlattenEbnfExpr::Identifier(id, span) => {
+            FlattenEbnfExpr::Identifier(id, .., span) => {
+                if NativeCallKind::is_valid_name(id) {
+                    let kind = NativeCallKind::from(id.as_str());
+                    if let Some(c) = ByteToCharIter::new(s).next() {
+                        if kind.call(c) {
+                            return Some(&s[0..c.len_utf8()]);
+                        }
+                    }
+                    return None;
+                }
                 if let Some(el) = env.get(id) {
                     el.match_expr(s, env, source_manager, diagnostic)
                 } else {
@@ -776,13 +794,14 @@ impl FlattenEbnfExpr {
 
                 for e in iter {
                     let mut i = 0;
-                    while i < matched.len() {
-                        let end = (e.get_max_byte_len() as usize + i).min(matched.len());
-                        let temp_source = &matched[i..end];
+                    let count = matched.chars().count();
+                    while i < count {
+                        let end = (i + e.get_max_byte_len() as usize).min(count);
+                        let temp_source = &matched.chars().skip(end).collect::<String>();
                         if let Some(_) =
                             e.match_expr(temp_source.as_bytes(), env, source_manager, diagnostic)
                         {
-                            matched = &matched[0..i];
+                            matched = &matched[0..temp_source.len()];
                             break;
                         }
                         i += end - i;
@@ -796,21 +815,35 @@ impl FlattenEbnfExpr {
                 Some(matched.as_bytes())
             }
             FlattenEbnfExpr::Extend(v, ..) => {
-                let mut end = 0usize;
-
-                for expr in v.iter() {
-                    let temp_source = &s[end..];
-                    if let Some(s_) = expr.match_expr(temp_source, env, source_manager, diagnostic)
-                    {
-                        end += s_.len();
-                    } else {
-                        return None;
-                    }
+                if v.is_empty() {
+                    return None;
                 }
-                if end == 0 {
+
+                let matched = v[0].match_expr(s, env, source_manager, diagnostic);
+
+                if matched.is_none() {
+                    return None;
+                }
+
+                let mut matched = matched.unwrap();
+                let mut end = matched.len();
+                let mut last_end = end;
+                let start = matched.len();
+                for expr in v.iter().skip(1) {
+                    let max_byte_len = expr.get_max_byte_len() as usize;
+                    end += ByteToCharIter::new(&s[end..]).utf8_len_after_skip(max_byte_len);
+                    matched = &s[start..end];
+                    if expr.match_expr(matched, env, source_manager, diagnostic).is_none() {
+                        break;
+                    }
+
+                    last_end = end;
+                }
+
+                if last_end == 0 {
                     None
                 } else {
-                    Some(&s[..end])
+                    Some(&s[..last_end])
                 }
             }
             FlattenEbnfExpr::Optional(o, ..) => {
@@ -824,20 +857,18 @@ impl FlattenEbnfExpr {
             }
             FlattenEbnfExpr::Repetition(v, ..) => {
                 let mut end = 0usize;
-                let mut len = v.get_max_byte_len() as usize;
-                while let Some(s_) = v.match_expr(&s[end..len], env, source_manager, diagnostic) {
+                while let Some(s_) = v.match_expr(&s[end..], env, source_manager, diagnostic) {
                     end += s_.len();
-                    len = (end + len).min(s.len());
                 }
 
                 Some(&s[..end])
             }
             FlattenEbnfExpr::Terminal(t) => {
-                if t.len() != s.len() {
+                let end = t.len_utf8();
+                
+                if end >= s.len() {
                     return None;
                 }
-
-                let end = t.len_utf8();
 
                 if t == &s[0..end] {
                     return Some(&s[..end]);
@@ -976,16 +1007,131 @@ impl Display for FlattenEbnfExpr {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NativeCallKind {
+    StartIdentifier,
+    ContIdentifier,
+    Whitespace,
+    NewLine,
+    Tab,
+    Digit,
+    Letter,
+    HexDigit,
+    OctDigit,
+    BinDigit,
+    AlphaNumeric,
+    Alpha
+}
+
+impl NativeCallKind {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::StartIdentifier => "start_identifier",
+            Self::ContIdentifier => "cont_identifier",
+            Self::Whitespace => "whitespace",
+            Self::NewLine => "new_line",
+            Self::Tab => "tab",
+            Self::Digit => "digit",
+            Self::Letter => "letter",
+            Self::HexDigit => "hex_digit",
+            Self::OctDigit => "oct_digit",
+            Self::BinDigit => "bin_digit",
+            Self::AlphaNumeric => "alpha_numeric",
+            Self::Alpha => "alpha",
+        }
+    }
+
+    fn call(&self, c: char) -> bool {
+        match self {
+            Self::StartIdentifier => is_valid_identifier_start_code_point(c),
+            Self::ContIdentifier => is_valid_identifier_continuation_code_point(c),
+            Self::Whitespace => c.is_whitespace(),
+            Self::NewLine => c == '\n',
+            Self::Tab => c == '\t',
+            Self::Digit => c.is_digit(10),
+            Self::Letter => c.is_alphabetic(),
+            Self::HexDigit => c.is_digit(16),
+            Self::OctDigit => c.is_digit(8),
+            Self::BinDigit => c.is_digit(2),
+            Self::AlphaNumeric => c.is_alphanumeric(),
+            Self::Alpha => c.is_alphabetic(),
+        }
+    }
+
+    fn is_valid_name(name: &str) -> bool {
+        match name {
+            "start_identifier"
+            | "cont_identifier"
+            | "whitespace"
+            | "new_line"
+            | "tab"
+            | "digit"
+            | "letter"
+            | "hex_digit"
+            | "oct_digit"
+            | "bin_digit"
+            | "alpha_numeric"
+            | "alpha" => true,
+            _ => false,
+        }
+    }
+}
+
+impl Debug for NativeCallKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<Native Call='{}'>", self.as_str())
+    }
+}
+
+impl Display for NativeCallKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl From<&str> for NativeCallKind {
+    fn from(s: &str) -> Self {
+        match s {
+            "start_identifier" => Self::StartIdentifier,
+            "cont_identifier" => Self::ContIdentifier,
+            "whitespace" => Self::Whitespace,
+            "new_line" => Self::NewLine,
+            "tab" => Self::Tab,
+            "digit" => Self::Digit,
+            "letter" => Self::Letter,
+            "hex_digit" => Self::HexDigit,
+            "oct_digit" => Self::OctDigit,
+            "bin_digit" => Self::BinDigit,
+            "alpha_numeric" => Self::AlphaNumeric,
+            "alpha" => Self::Alpha,
+            _ => unreachable!("Unknown native call kind '{}'", s),
+        }
+    }
+}
+
+impl From<String> for NativeCallKind {
+    fn from(s: String) -> Self {
+        NativeCallKind::from(s.as_str())
+    }
+}
+
+impl PartialEq<str> for NativeCallKind {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum EbnfParserEnvVariable {
     Expr(FlattenEbnfExpr),
-    NativeCall(fn(char) -> bool),
+    NativeCall(NativeCallKind),
 }
 
 impl Display for EbnfParserEnvVariable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Expr(e) => write!(f, "{}", e),
-            Self::NativeCall(func) => write!(f, "<Native Call={:p}>", func),
+            Self::NativeCall(name) => write!(f, "<Native Call='{name}'>"),
         }
     }
 }
@@ -994,7 +1140,7 @@ impl EbnfParserEnvVariable {
     fn substitute_extend(&mut self, old_name: &str, new_name: &str) -> bool {
         match self {
             Self::Expr(expr) => expr.substitute_extend(old_name, new_name),
-            _ => false,
+            _ => true,
         }
     }
 
@@ -1011,9 +1157,9 @@ impl EbnfParserEnvVariable {
     ) -> Option<&'a [u8]> {
         match self {
             Self::Expr(expr) => expr.match_expr(s, env, source_manager, diagnostic),
-            Self::NativeCall(func) => {
+            Self::NativeCall(func_name) => {
                 if let Some(c) = ByteToCharIter::new(s).next() {
-                    if func(c) {
+                    if func_name.call(c) {
                         let len = c.len_utf8();
                         Some(&s[..len])
                     } else {
@@ -1083,18 +1229,17 @@ impl FlattenEbnfExpr {
                 has_substituted
             }
             Self::Optional(expr, ..) | Self::Repetition(expr, ..) => {
-                expr.substitute_extend(old_name, new_name);
-                false
+                expr.substitute_extend(old_name, new_name)
             }
-            Self::Identifier(name, span) => {
+            Self::Identifier(name, count, span) => {
                 if name == old_name {
-                    *self = Self::Identifier(new_name.to_string(), *span);
+                    *self = Self::Identifier(new_name.to_string(), *count, *span);
                     true
                 } else {
                     false
                 }
             }
-            _ => false,
+            _ => false
         }
     }
 }
@@ -1115,15 +1260,12 @@ impl<'a> EbnfParserMatcher<'a> {
     }
 
     fn add_identifier_env(&mut self) {
-        self.add_native_call("start_identifier", is_valid_identifier_start_code_point);
-        self.add_native_call(
-            "cont_identifier",
-            is_valid_identifier_continuation_code_point,
-        );
-        let rep_expr = FlattenEbnfExpr::Identifier("cont_identifier".to_string(), None);
+        self.add_native_call(NativeCallKind::StartIdentifier);
+        self.add_native_call(NativeCallKind::ContIdentifier);
+        let rep_expr = FlattenEbnfExpr::Identifier(NativeCallKind::ContIdentifier.to_string(), 1, None);
         let expr = FlattenEbnfExpr::Concat(
             vec![
-                FlattenEbnfExpr::Identifier("start_identifier".to_string(), None),
+                FlattenEbnfExpr::Identifier(NativeCallKind::StartIdentifier.to_string(), 1, None),
                 FlattenEbnfExpr::Repetition(Box::new(rep_expr), 1),
             ],
             1,
@@ -1132,46 +1274,46 @@ impl<'a> EbnfParserMatcher<'a> {
         let statement = FlattenEbnfExpr::Variable {
             name: "identifier".to_string(),
             expr: Box::new(expr),
-            is_def: true,
+            is_def: false,
         };
         let identifier = FlattenEbnfExpr::Statements(vec![statement], 1);
         identifier.init_env(&mut self.env, &mut self.def, self.diagnostic);
     }
 
     fn add_is_digit(&mut self) {
-        self.add_native_call("digit", |c| c.is_digit(10));
+        self.add_native_call(NativeCallKind::Digit);
     }
 
     fn add_is_hex_digit(&mut self) {
-        self.add_native_call("hex_digit", |c| c.is_digit(16));
+        self.add_native_call(NativeCallKind::HexDigit);
     }
 
     fn add_is_octal_digit(&mut self) {
-        self.add_native_call("octal_digit", |c| c.is_digit(8));
+        self.add_native_call(NativeCallKind::OctDigit);
     }
 
     fn add_is_binary_digit(&mut self) {
-        self.add_native_call("binary_digit", |c| c.is_digit(2));
+        self.add_native_call(NativeCallKind::BinDigit);
     }
 
     fn add_is_alpha(&mut self) {
-        self.add_native_call("alpha", |c| c.is_alphabetic());
+        self.add_native_call(NativeCallKind::Letter);
     }
 
     fn add_is_alphanumeric(&mut self) {
-        self.add_native_call("alphanumeric", |c| c.is_alphanumeric());
+        self.add_native_call(NativeCallKind::AlphaNumeric);
     }
 
     fn add_is_whitespace(&mut self) {
-        self.add_native_call("whitespace", |c| c.is_whitespace());
+        self.add_native_call(NativeCallKind::Whitespace);
     }
 
     fn add_is_newline(&mut self) {
-        self.add_native_call("newline", |c| c == '\n');
+        self.add_native_call(NativeCallKind::NewLine);
     }
 
     fn add_is_tab(&mut self) {
-        self.add_native_call("tab", |c| c == '\t');
+        self.add_native_call(NativeCallKind::Tab);
     }
 
     pub(crate) fn init(&mut self, expr: FlattenEbnfExpr) {
@@ -1200,9 +1342,13 @@ impl<'a> EbnfParserMatcher<'a> {
         );
     }
 
-    pub(crate) fn add_native_call(&mut self, name: &str, func: fn(char) -> bool) {
+    fn add_native_call(&mut self, kind: NativeCallKind) {
         self.env
-            .insert(name.to_string(), EbnfParserEnvVariable::NativeCall(func));
+            .insert(kind.to_string(), EbnfParserEnvVariable::NativeCall(kind));
+    }
+
+    pub(crate) fn contains_def(&self, name: &str) -> bool {
+        self.def.contains(&name.to_owned())
     }
 
     pub(crate) fn match_native_identifier(s: &[u8]) -> Option<&[u8]> {
@@ -1240,6 +1386,7 @@ impl<'a> EbnfParserMatcher<'a> {
     // }
 
     fn match_expr_helper<'b>(
+        def: &[String],
         env: &HashMap<String, EbnfParserEnvVariable>,
         key: &str,
         expr: &EbnfParserEnvVariable,
@@ -1249,7 +1396,7 @@ impl<'a> EbnfParserMatcher<'a> {
     ) -> Option<(&'b [u8], String)> {
         match key {
             "identifier" => {
-                let temp = if expr.is_native_call() {
+                let temp = if !def.contains(&key.to_owned()) {
                     Self::match_native_identifier(s).map(|s| (s, key.to_owned()))
                 } else {
                     expr.match_expr(s, env, source_manager, diagnostic)
@@ -1271,7 +1418,7 @@ impl<'a> EbnfParserMatcher<'a> {
         for d in self.def.iter() {
             if let Some(expr) = self.env.get(d) {
                 let temp =
-                    Self::match_expr_helper(&self.env, d, expr, s, source_manager, self.diagnostic);
+                    Self::match_expr_helper(&self.def, &self.env, d, expr, s, source_manager, self.diagnostic);
                 if temp.is_some() {
                     return temp;
                 }
