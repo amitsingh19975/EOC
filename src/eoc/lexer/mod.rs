@@ -18,7 +18,7 @@ use super::{
         trie::Trie,
     },
 };
-use std::{path::Path, vec};
+use std::{path::Path, sync::{Arc, Mutex}, vec};
 pub(crate) mod ebnf;
 pub(crate) mod str_utils;
 pub(crate) mod token;
@@ -34,6 +34,8 @@ pub(crate) struct Lexer {
     custom_operators_trie: Trie<u8, usize>,
     custom_keywords_trie: Trie<u8, usize>,
     rewind_stack: Vec<usize>,
+    global_lexer_matcher: Option<Arc<Mutex<EbnfParserMatcher>>>,
+    local_lexer_matcher: EbnfParserMatcher
 }
 
 impl Lexer {
@@ -48,7 +50,13 @@ impl Lexer {
             rewind_stack: Vec::new(),
             custom_operators_trie: Trie::new(),
             custom_keywords_trie: Trie::new(),
+            global_lexer_matcher: None,
+            local_lexer_matcher: EbnfParserMatcher::new(),
         }
+    }
+
+    pub(crate) fn set_global_lexer_matcher(&mut self, matcher: Arc<Mutex<EbnfParserMatcher>>) {
+        self.global_lexer_matcher = Some(matcher);
     }
 
     pub(crate) fn new_from_filepath<P: AsRef<Path>, D: Into<Diagnostic>>(
@@ -198,21 +206,30 @@ impl Lexer {
 
         self.save_cursor();
         let mut has_dot = false;
+        let has_hex = self.source_manager.get_source().starts_with(b"0x") || self.source_manager.get_source().starts_with(b"0X");
+        let mut has_e = false;
+        let mut has_p = false;
+
         while let Some(ch) = self.peek_char() {
             has_dot = (ch == '.') || has_dot;
+
+            has_e = (ch == 'e' || ch == 'E') || has_e;
+            has_p = (ch == 'p' || ch == 'P') || has_p;
+
             match ch {
-                'e' | 'E' | 'p' | 'P' if has_dot => {
-                    self.rewind_cursor();
-                    return false;
-                }
-                ch if ch.is_whitespace() => break,
+                _ if ch.is_whitespace() => break,
                 _ => {
                     self.next_char();
                 }
             }
         }
 
+        
         self.rewind_cursor();
+        
+        if has_dot || (!has_hex && has_e) || has_p {
+            return false;
+        }
 
         let ch = self.peek_char();
         if ch.is_none() {
@@ -430,14 +447,61 @@ impl Lexer {
         true
     }
 
+    // fn lex_number(&mut self, tokens: &mut Vec<Token>) -> bool {
+    //     let start = self.cursor;
+    //     if self.lex_integer(tokens) {
+    //         return true;
+    //     }
+
+    //     self.cursor = start;
+    //     self.lex_floating_point(tokens)
+    // }
+
     fn lex_number(&mut self, tokens: &mut Vec<Token>) -> bool {
         let start = self.cursor;
-        if self.lex_integer(tokens) {
+        if self.local_lexer_matcher.has_custom_integer_lexing() {
+            let temp = self.local_lexer_matcher.match_native(
+                ebnf::ast::NativeCallKind::Integer,
+                &self.source_manager.get_source()[self.cursor..],
+                RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+                &mut self.diagnostics,
+            );
+
+            if let Some(bytes) = temp {
+                let end = self.cursor + bytes.len();
+                let span = Span::from_usize(start, end);
+                tokens.push(Token::new(TokenKind::Integer, span));
+                self.cursor = end;
+                return true;
+            }
+        } else if self.lex_integer(tokens) {
             return true;
         }
 
         self.cursor = start;
-        self.lex_floating_point(tokens)
+
+
+        
+        if self.local_lexer_matcher.has_custom_floating_point_lexing() {
+            let temp = self.local_lexer_matcher.match_native(
+                ebnf::ast::NativeCallKind::FloatingPoint,
+                &self.source_manager.get_source()[self.cursor..],
+                RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+                &mut self.diagnostics,
+            );
+
+
+            if let Some(bytes) = temp {
+                let end = self.cursor + bytes.len();
+                let span = Span::from_usize(start, end);
+                tokens.push(Token::new(TokenKind::FloatingPoint, span));
+                self.cursor = end;
+                return true;
+            }
+        } else if self.lex_floating_point(tokens) {
+            return true;
+        }
+        false
     }
 
     fn lex_formatting_string(&mut self) -> Vec<Token> {
@@ -855,23 +919,7 @@ impl Lexer {
         );
         let tokens = enbf_lexer.lex();
         let program = EbnfParser::parse(tokens, &self.source_manager, &mut self.diagnostics);
-        let mut matcher = EbnfParserMatcher::new();
-        matcher.init(program, &mut self.diagnostics);
-        let temp = matcher.match_native(
-            ebnf::ast::NativeCallKind::FloatingPoint,
-            ".231E+10".as_bytes(),
-            RelativeSourceManager::new(&self.source_manager, 0),
-            &mut self.diagnostics,
-        ).map(|b| (b, "number"));
-        if let Some((bytes, id)) = temp {
-            println!(
-                "temp: id({}) => '{}'",
-                id,
-                std::str::from_utf8(bytes).unwrap()
-            );
-        } else {
-            eprintln!("Error: no match");
-        }
+        self.local_lexer_matcher.init(program, &mut self.diagnostics);
     }
 
     fn lex_back_tick(&mut self, tokens: &mut Vec<Token>) {
