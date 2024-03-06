@@ -2033,12 +2033,16 @@ impl EbnfParserMatcher {
         )
     }
 
+    pub(crate) fn has_custom_digit_lexing(&self) -> bool {
+        self.contains_def("hex_digit") || self.contains_def("oct_digit") || self.contains_def("bin_digit")
+    }
+
     pub(crate) fn has_custom_integer_lexing(&self) -> bool {
-        self.contains_def("integer")
+        self.contains_def("integer") || self.has_custom_digit_lexing()
     }
 
     pub(crate) fn has_custom_floating_point_lexing(&self) -> bool {
-        self.contains_def("floating_point")
+        self.contains_def("floating_point") || self.has_custom_integer_lexing()
     }
 
     pub(crate) fn has_custom_identifier_lexing(&self) -> bool {
