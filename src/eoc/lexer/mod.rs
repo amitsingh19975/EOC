@@ -197,10 +197,11 @@ impl Lexer {
         }
 
         self.save_cursor();
-
+        let mut has_dot = false;
         while let Some(ch) = self.peek_char() {
+            has_dot = (ch == '.') || has_dot;
             match ch {
-                'e' | 'E' | '.' | 'p' | 'P' => {
+                'e' | 'E' | 'p' | 'P' if has_dot => {
                     self.rewind_cursor();
                     return false;
                 }
@@ -289,7 +290,7 @@ impl Lexer {
         let span = Span::from_usize(start, span.end as usize);
         tokens.push(Token::new(TokenKind::Integer, span));
 
-        return true;
+        true
     }
 
     ///   floating_literal ::= [0-9][0-9]_*\.[0-9][0-9_]*
@@ -426,7 +427,7 @@ impl Lexer {
 
         tokens.push(Token::new(TokenKind::FloatingPoint, span));
 
-        return true;
+        true
     }
 
     fn lex_number(&mut self, tokens: &mut Vec<Token>) -> bool {
