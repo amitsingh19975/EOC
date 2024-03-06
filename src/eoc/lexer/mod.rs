@@ -199,306 +199,40 @@ impl Lexer {
     ///   integer_literal  ::= 0x[0-9a-fA-F][0-9a-fA-F_]*
     ///   integer_literal  ::= 0o[0-7][0-7_]*
     ///   integer_literal  ::= 0b[01][01_]*
-    fn lex_integer(&mut self, tokens: &mut Vec<Token>) -> bool {
-        if self.peek_char() == Some('.') {
-            return false;
-        }
-
-        self.save_cursor();
-        let mut has_dot = false;
-        let has_hex = self.source_manager.get_source().starts_with(b"0x") || self.source_manager.get_source().starts_with(b"0X");
-        let mut has_e = false;
-        let mut has_p = false;
-
-        while let Some(ch) = self.peek_char() {
-            has_dot = (ch == '.') || has_dot;
-
-            has_e = (ch == 'e' || ch == 'E') || has_e;
-            has_p = (ch == 'p' || ch == 'P') || has_p;
-
-            match ch {
-                _ if ch.is_whitespace() => break,
-                _ => {
-                    self.next_char();
-                }
-            }
-        }
-
-        
-        self.rewind_cursor();
-        
-        if has_dot || (!has_hex && has_e) || has_p {
-            return false;
-        }
-
-        let ch = self.peek_char();
-        if ch.is_none() {
-            return false;
-        }
-
-        let ch = unsafe { ch.unwrap_unchecked() };
-
-        if !ch.is_ascii_digit() {
-            return false;
-        }
-
-        let is_start_with_zero = ch == '0';
-
-        let start = self.cursor;
-        self.next_char();
-
-        if is_start_with_zero {
-            if self.peek_char() == Some('x') {
-                self.next_char();
-                let span = self.skip_while(|c| c.is_ascii_hexdigit() || c == '_');
-                if self.peek_char() == Some('.') {
-                    self.cursor = start;
-                    return false;
-                }
-
-                let span = Span::from_usize(start, span.end as usize);
-                tokens.push(Token::new(TokenKind::Integer, span));
-                return true;
-            }
-
-            if self.peek_char() == Some('o') {
-                self.next_char();
-                let span = self.skip_while(|c| c.is_ascii_digit() || c == '_');
-                let span = Span::from_usize(start, span.end as usize);
-                let slice: Vec<u8> = self.source_manager[span]
-                    .iter()
-                    .filter(|c| **c != b'_')
-                    .map(|c| *c)
-                    .collect();
-                for (index, byte) in slice.iter().enumerate() {
-                    if *byte > b'7' {
-                        let start = span.start as usize + 2 + 1;
-                        let span = Span::from_usize(start + index, start + index + 1);
-                        let info = self.source_manager.get_source_info(span);
-                        self.diagnostics
-                            .builder()
-                            .report(DiagnosticLevel::Error, "Invalid octal digit", info, None)
-                            .add_error(
-                                "Octal digit must be between 0 and 7",
-                                Some(self.source_manager.fix_span(span)),
-                            )
-                            .commit();
-                        return true;
-                    }
-                }
-                tokens.push(Token::new(TokenKind::Integer, span));
-                return true;
-            }
-
-            if self.peek_char() == Some('b') {
-                self.next_char();
-                let span = self.skip_while(|c| c == '0' || c == '1' || c == '_');
-                let span = Span::from_usize(start, span.end as usize);
-                tokens.push(Token::new(TokenKind::Integer, span));
-                return true;
-            }
-        }
-
-        let span = self.skip_while(|c| c.is_ascii_digit() || c == '_');
-        if self.peek_char() == Some('.') {
-            self.cursor = start;
-            return false;
-        }
-        let span = Span::from_usize(start, span.end as usize);
-        tokens.push(Token::new(TokenKind::Integer, span));
-
-        true
-    }
-
     ///   floating_literal ::= [0-9][0-9]_*\.[0-9][0-9_]*
     ///   floating_literal ::= [0-9][0-9]*\.[0-9][0-9_]*[eE][+-]?[0-9][0-9_]*
     ///   floating_literal ::= [0-9][0-9_]*[eE][+-]?[0-9][0-9_]*
     ///   floating_literal ::= 0x[0-9A-Fa-f][0-9A-Fa-f_]*
     ///                          (\.[0-9A-Fa-f][0-9A-Fa-f_]*)?[pP][+-]?[0-9][0-9_]*
-    fn lex_floating_point(&mut self, tokens: &mut Vec<Token>) -> bool {
-        let ch = self.peek_char();
-        if ch.is_none() {
-            return false;
-        }
-
-        let ch = unsafe { ch.unwrap_unchecked() };
-
-        if !ch.is_ascii_digit() && ch != '.' {
-            return false;
-        }
-
-        let is_start_with_zero = ch == '0';
-        let start = self.cursor;
-        self.next_char();
-
-        if is_start_with_zero && self.peek_char() == Some('x') {
-            self.next_char();
-            let span = self.skip_while(|c| c.is_ascii_hexdigit() || c == '_');
-            let mut span = Span::from_usize(start, span.end as usize);
-            if self.peek_char() == Some('.') {
-                self.next_char();
-                let dot_span = self.skip_while(|c| c.is_ascii_hexdigit() || c == '_');
-                span = Span::from_usize(start, dot_span.end as usize);
-            }
-
-            if self.peek_char() == Some('p') || self.peek_char() == Some('P') {
-                self.next_char();
-                if self.peek_char() == Some('+') || self.peek_char() == Some('-') {
-                    self.next_char();
-                }
-                let p_span = self.skip_while(|c| c.is_ascii_digit() || c == '_');
-                span = Span::from_usize(start, p_span.end as usize);
-                tokens.push(Token::new(TokenKind::FloatingPoint, span));
-                return true;
-            }
-
-            let slice = self.source_manager[span]
-                .iter()
-                .filter(|c| **c != b'_')
-                .map(|c| *c);
-
-            let mut dot_count = 0;
-            for (index, byte) in slice.enumerate() {
-                if byte == b'.' {
-                    dot_count += 1;
-                }
-
-                let start = span.start as usize + 2 + 1;
-                let span = Span::from_usize(start + index, start + index + 1);
-
-                if dot_count > 1 {
-                    let info = self.source_manager.get_source_info(span);
-                    self.diagnostics
-                        .builder()
-                        .report(
-                            DiagnosticLevel::Error,
-                            "Invalid floating point literal",
-                            info,
-                            None,
-                        )
-                        .add_error(
-                            "Invalid floating point literal",
-                            Some(self.source_manager.fix_span(span)),
-                        )
-                        .commit();
-                    return true;
-                }
-            }
-
-            tokens.push(Token::new(TokenKind::FloatingPoint, span));
-            return true;
-        }
-
-        let span = self.skip_while(|c| c.is_ascii_digit() || c == '_');
-        let mut span = Span::from_usize(start, span.end as usize);
-        if self.peek_char() == Some('.') {
-            self.next_char();
-            let dot_span = self.skip_while(|c| c.is_ascii_digit() || c == '_');
-            span = Span::from_usize(start, dot_span.end as usize);
-        }
-
-        if self.peek_char() == Some('e') || self.peek_char() == Some('E') {
-            self.next_char();
-            if self.peek_char() == Some('+') || self.peek_char() == Some('-') {
-                self.next_char();
-            }
-            let e_span = self.skip_while(|c| c.is_ascii_digit() || c == '_');
-            span = Span::from_usize(start, e_span.end as usize as usize);
-            tokens.push(Token::new(TokenKind::FloatingPoint, span));
-            return true;
-        }
-
-        let slice: Vec<u8> = self.source_manager[span]
-            .iter()
-            .filter(|c| **c != b'_')
-            .map(|c| *c)
-            .collect();
-
-        let mut dot_count = 0;
-        for (index, byte) in slice.iter().enumerate() {
-            if *byte == b'.' {
-                dot_count += 1;
-            }
-
-            let start = span.start as usize + 2 + 1;
-            let span = Span::from_usize(start + index, start + index + 1);
-
-            if dot_count > 1 {
-                let info = self.source_manager.get_source_info(span);
-                self.diagnostics
-                    .builder()
-                    .report(
-                        DiagnosticLevel::Error,
-                        "Invalid floating point literal",
-                        info,
-                        None,
-                    )
-                    .add_error(
-                        "Invalid floating point literal",
-                        Some(self.source_manager.fix_span(span)),
-                    )
-                    .commit();
-                return true;
-            }
-        }
-
-        tokens.push(Token::new(TokenKind::FloatingPoint, span));
-
-        true
-    }
-
-    // fn lex_number(&mut self, tokens: &mut Vec<Token>) -> bool {
-    //     let start = self.cursor;
-    //     if self.lex_integer(tokens) {
-    //         return true;
-    //     }
-
-    //     self.cursor = start;
-    //     self.lex_floating_point(tokens)
-    // }
-
     fn lex_number(&mut self, tokens: &mut Vec<Token>) -> bool {
-        let start = self.cursor;
-        if self.local_lexer_matcher.has_custom_integer_lexing() {
-            let temp = self.local_lexer_matcher.match_native(
-                ebnf::ast::NativeCallKind::Integer,
-                &self.source_manager.get_source()[self.cursor..],
-                RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
-                &mut self.diagnostics,
-            );
+        let temp = self.local_lexer_matcher.match_native(
+            ebnf::ast::NativeCallKind::Integer,
+            &self.source_manager.get_source()[self.cursor..],
+            RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+            &mut self.diagnostics,
+        );
 
-            if let Some(bytes) = temp {
-                let end = self.cursor + bytes.len();
-                let span = Span::from_usize(start, end);
-                tokens.push(Token::new(TokenKind::Integer, span));
-                self.cursor = end;
-                return true;
-            }
-        } else if self.lex_integer(tokens) {
+        if let Some(bytes) = temp {
+            let end = self.cursor + bytes.len();
+            let span = Span::from_usize(self.cursor, end);
+            tokens.push(Token::new(TokenKind::Integer, span));
+            self.cursor = end;
             return true;
         }
 
-        self.cursor = start;
+        let temp = self.local_lexer_matcher.match_native(
+            ebnf::ast::NativeCallKind::FloatingPoint,
+            &self.source_manager.get_source()[self.cursor..],
+            RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+            &mut self.diagnostics,
+        );
 
 
-        
-        if self.local_lexer_matcher.has_custom_floating_point_lexing() {
-            let temp = self.local_lexer_matcher.match_native(
-                ebnf::ast::NativeCallKind::FloatingPoint,
-                &self.source_manager.get_source()[self.cursor..],
-                RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
-                &mut self.diagnostics,
-            );
-
-
-            if let Some(bytes) = temp {
-                let end = self.cursor + bytes.len();
-                let span = Span::from_usize(start, end);
-                tokens.push(Token::new(TokenKind::FloatingPoint, span));
-                self.cursor = end;
-                return true;
-            }
-        } else if self.lex_floating_point(tokens) {
+        if let Some(bytes) = temp {
+            let end = self.cursor + bytes.len();
+            let span = Span::from_usize(self.cursor, end);
+            tokens.push(Token::new(TokenKind::FloatingPoint, span));
+            self.cursor = end;
             return true;
         }
         false
