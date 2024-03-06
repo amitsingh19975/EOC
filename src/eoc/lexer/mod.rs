@@ -1,25 +1,28 @@
 use crate::eoc::lexer::ebnf::ast::EbnfParser;
 
 use self::{
-    ebnf::{ast::EbnfParserMatcher, lexer::EbnfLexer}, token::{Token, TokenKind}, utils::{
+    ebnf::{ast::{EbnfParserMatcher, RelativeSourceManager}, lexer::EbnfLexer},
+    token::{Token, TokenKind},
+    utils::{
         is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point,
         is_valid_operator_continuation_code_point, is_valid_operator_start_code_point,
         CustomOperator, ParenMatching,
-    }
+    },
 };
 use super::{
     ast::identifier::Identifier,
     utils::{
         diagnostic::{Diagnostic, DiagnosticLevel, DiagnosticReporter},
         source_manager::SourceManager,
-        span::Span, trie::Trie,
+        span::Span,
+        trie::Trie,
     },
 };
 use std::{path::Path, vec};
-pub(crate) mod token;
-pub(crate) mod utils;
 pub(crate) mod ebnf;
 pub(crate) mod str_utils;
+pub(crate) mod token;
+pub(crate) mod utils;
 
 pub(crate) struct Lexer {
     source_manager: SourceManager,
@@ -594,9 +597,12 @@ impl Lexer {
             tokens.push(start_format_token);
         }
 
-        format_tokens = format_tokens.into_iter().filter(|t| !t.span.is_empty()).collect();
+        format_tokens = format_tokens
+            .into_iter()
+            .filter(|t| !t.span.is_empty())
+            .collect();
         tokens.extend(format_tokens);
-        
+
         let span = Span::from_usize(start, end);
         if start_quote_span == span || self.peek_char() != Some('"') {
             return;
@@ -607,7 +613,7 @@ impl Lexer {
         if span.is_empty() {
             return;
         }
-        
+
         if !found_format_string {
             tokens.push(Token::new(TokenKind::String, span));
             return;
@@ -840,14 +846,28 @@ impl Lexer {
     }
 
     fn parse_ebnf_lexer_block(&mut self, span: Span) {
-        let mut enbf_lexer = EbnfLexer::new(&self.source_manager, &mut self.diagnostics, span.start as usize, span.end as usize);
+        let mut enbf_lexer = EbnfLexer::new(
+            &self.source_manager,
+            &mut self.diagnostics,
+            span.start as usize,
+            span.end as usize,
+        );
         let tokens = enbf_lexer.lex();
         let program = EbnfParser::parse(tokens, &self.source_manager, &mut self.diagnostics);
         let mut matcher = EbnfParserMatcher::new();
         matcher.init(program, &mut self.diagnostics);
-        let temp = matcher.match_expr("++".as_bytes(), &mut self.diagnostics);
+        let temp = matcher.match_native(
+            ebnf::ast::NativeCallKind::FloatingPoint,
+            ".231E+10".as_bytes(),
+            RelativeSourceManager::new(&self.source_manager, 0),
+            &mut self.diagnostics,
+        ).map(|b| (b, "number"));
         if let Some((bytes, id)) = temp {
-            println!("temp: id({}) => '{}'", id, std::str::from_utf8(bytes).unwrap());
+            println!(
+                "temp: id({}) => '{}'",
+                id,
+                std::str::from_utf8(bytes).unwrap()
+            );
         } else {
             eprintln!("Error: no match");
         }
@@ -865,16 +885,35 @@ impl Lexer {
             loop {
                 let ch = self.peek_char();
                 if ch.is_none() {
-                    self.diagnostics.builder()
-                        .report(DiagnosticLevel::Error, "Unterminated lexer block", self.source_manager.get_source_info(Span::from_usize(self.cursor, self.cursor + 1)), None)
-                        .add_error("Try add '```' to close the lexer block", Some(self.source_manager.fix_span(Span::from_usize(self.cursor, self.cursor + 1))))
+                    self.diagnostics
+                        .builder()
+                        .report(
+                            DiagnosticLevel::Error,
+                            "Unterminated lexer block",
+                            self.source_manager
+                                .get_source_info(Span::from_usize(self.cursor, self.cursor + 1)),
+                            None,
+                        )
+                        .add_error(
+                            "Try add '```' to close the lexer block",
+                            Some(
+                                self.source_manager
+                                    .fix_span(Span::from_usize(self.cursor, self.cursor + 1)),
+                            ),
+                        )
                         .commit();
                     break;
                 }
 
                 let ch = unsafe { ch.unwrap_unchecked() };
 
-                if ch == '`' && ParenMatching::is_triple_back_tick_block(&self.source_manager.get_source(), self.cursor, b"```") {
+                if ch == '`'
+                    && ParenMatching::is_triple_back_tick_block(
+                        &self.source_manager.get_source(),
+                        self.cursor,
+                        b"```",
+                    )
+                {
                     let span = Span::from_usize(start, self.cursor);
                     self.parse_ebnf_lexer_block(span);
                     self.cursor += 3;
@@ -1045,10 +1084,12 @@ impl Lexer {
                         should_run_custom_match = false;
                     }
                 }
-                
+
                 self.cursor = current;
-                
-                if self.cursor != 0 && !self.source_manager.get_source()[self.cursor - 1].is_ascii_whitespace() {
+
+                if self.cursor != 0
+                    && !self.source_manager.get_source()[self.cursor - 1].is_ascii_whitespace()
+                {
                     should_run_custom_match = true;
                 }
             }
@@ -1061,7 +1102,7 @@ impl Lexer {
                     self.cursor += len;
                     continue;
                 }
-    
+
                 if let (Some(token), len) =
                     self.match_custom_keyword(&self.source_manager[self.cursor..])
                 {
@@ -1236,7 +1277,7 @@ impl Lexer {
     fn match_custom_keyword(&self, source: &[u8]) -> (Option<Token>, usize) {
         let mut valid_kw = None;
         let mut len = 0;
-        
+
         if source.len() == 0 {
             return (valid_kw, len);
         }
@@ -1355,7 +1396,10 @@ impl Lexer {
                         break;
                     }
 
-                    let slice_iter = slice.iter().filter(|c| !c.is_ascii_whitespace()).enumerate();
+                    let slice_iter = slice
+                        .iter()
+                        .filter(|c| !c.is_ascii_whitespace())
+                        .enumerate();
                     let slice_len = slice_iter.clone().count();
 
                     if slice_len == underscores_count {
@@ -1389,8 +1433,10 @@ impl Lexer {
 
                     if is_middle {
                         let mid_span = underscore[1];
-                        let left_span = Span::new(span.start, mid_span.start).trim(&self.source_manager);
-                        let right_span = Span::new(mid_span.end, span.end).trim(&self.source_manager);
+                        let left_span =
+                            Span::new(span.start, mid_span.start).trim(&self.source_manager);
+                        let right_span =
+                            Span::new(mid_span.end, span.end).trim(&self.source_manager);
                         let op = CustomOperator::Compound {
                             open: Identifier::new(left_span),
                             close: Identifier::new(right_span),
@@ -1398,16 +1444,18 @@ impl Lexer {
                         };
                         self.custom_operators.push(op);
                     } else if is_start && is_end {
-                        let op_span = Span::new(underscore[0].end, underscore[2].start).trim(&self.source_manager);
+                        let op_span = Span::new(underscore[0].end, underscore[2].start)
+                            .trim(&self.source_manager);
                         let op = CustomOperator::Infix(Identifier::new(op_span));
                         self.custom_operators.push(op);
                     } else if is_start {
-                        let op_span =
-                            Span::new(underscore[0].end, (start + slice.len()) as u32).trim(&self.source_manager);
+                        let op_span = Span::new(underscore[0].end, (start + slice.len()) as u32)
+                            .trim(&self.source_manager);
                         let op = CustomOperator::Prefix(Identifier::new(op_span));
                         self.custom_operators.push(op);
                     } else if is_end {
-                        let op_span = Span::new(start as u32, underscore[2].start).trim(&self.source_manager);
+                        let op_span =
+                            Span::new(start as u32, underscore[2].start).trim(&self.source_manager);
                         let op = CustomOperator::Postfix(Identifier::new(op_span));
                         self.custom_operators.push(op);
                     } else {
@@ -1417,7 +1465,10 @@ impl Lexer {
                     }
 
                     if let Some(last) = self.custom_operators.last() {
-                        self.custom_operators_trie.insert(last.to_str(&self.source_manager).as_bytes(), self.custom_operators.len() - 1);
+                        self.custom_operators_trie.insert(
+                            last.to_str(&self.source_manager).as_bytes(),
+                            self.custom_operators.len() - 1,
+                        );
                     }
 
                     operator_found = true;
@@ -1528,9 +1579,9 @@ impl Lexer {
                         }
                         continue;
                     }
-                    self.custom_keywords
-                        .push(Identifier::new(span));
-                    self.custom_keywords_trie.insert(slice, self.custom_keywords.len() - 1);
+                    self.custom_keywords.push(Identifier::new(span));
+                    self.custom_keywords_trie
+                        .insert(slice, self.custom_keywords.len() - 1);
                     keyword_found = true;
                 }
                 '(' => {
