@@ -179,19 +179,41 @@ impl Lexer {
     }
 
     fn lex_identifier(&mut self, tokens: &mut Vec<Token>, should_parse_nested_operator: bool) {
-        let span = self.skip_while(|c| is_valid_identifier_continuation_code_point(c));
-        let slice = &self.source_manager[span];
-        let kind: TokenKind = slice.into();
-        tokens.push(Token::new(kind, span));
+        if let Some(slice) = self.local_lexer_matcher.match_identifier(
+            &self.source_manager.get_source()[self.cursor..],
+            RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+            &mut self.diagnostics,
+        ) {
+            let end = self.cursor + slice.len();
+            let span = Span::from_usize(self.cursor, end);
+            tokens.push(Token::new(TokenKind::Identifier, span));
+            self.cursor = end;
 
-        if should_parse_nested_operator {
-            if kind == TokenKind::KwOperator {
-                let new_tokens = self.lex_custom_operator(span);
-                tokens.extend(new_tokens);
-            } else if kind == TokenKind::KwKeyword {
-                let new_tokens = self.lex_custom_keyword(span);
-                tokens.extend(new_tokens);
+            let kind: TokenKind = slice.into();
+            
+            if should_parse_nested_operator {
+                if kind == TokenKind::KwOperator {
+                    let new_tokens = self.lex_custom_operator(span);
+                    tokens.extend(new_tokens);
+                } else if kind == TokenKind::KwKeyword {
+                    let new_tokens = self.lex_custom_keyword(span);
+                    tokens.extend(new_tokens);
+                }
             }
+        }
+
+    }
+
+    fn lex_operator(&mut self, tokens: &mut Vec<Token>) {
+        if let Some(slice) = self.local_lexer_matcher.match_operator(
+            &self.source_manager.get_source()[self.cursor..],
+            RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+            &mut self.diagnostics,
+        ) {
+            let end = self.cursor + slice.len();
+            let span = Span::from_usize(self.cursor, end);
+            tokens.push(Token::new(TokenKind::Operator, span));
+            self.cursor = end;
         }
     }
 
@@ -653,7 +675,7 @@ impl Lexer {
         );
         let tokens = enbf_lexer.lex();
         let program = EbnfParser::parse(tokens, &self.source_manager, &mut self.diagnostics);
-        self.local_lexer_matcher.init(program, &mut self.diagnostics);
+        self.local_lexer_matcher.init(Some(program), &mut self.diagnostics);
     }
 
     fn lex_back_tick(&mut self, tokens: &mut Vec<Token>) {
@@ -827,6 +849,34 @@ impl Lexer {
         }
     }
 
+    fn is_start_of_identifier(&mut self) -> bool {
+        // println!("str: {:?}", std::str::from_utf8(&self.source_manager.get_source()[self.cursor..]);
+        self.local_lexer_matcher.match_native(
+            ebnf::ast::NativeCallKind::StartIdentifier,
+            &self.source_manager.get_source()[self.cursor..],
+            RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+            &mut self.diagnostics,
+        ).is_some()
+    }
+
+    fn is_valid_digit(&mut self) -> bool {
+        self.local_lexer_matcher.match_native(
+            ebnf::ast::NativeCallKind::Digit,
+            &self.source_manager.get_source()[self.cursor..],
+            RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+            &mut self.diagnostics,
+        ).is_some()
+    }
+
+    fn is_valid_operator_start(&mut self) -> bool {
+        self.local_lexer_matcher.match_native(
+            ebnf::ast::NativeCallKind::StartOperator,
+            &self.source_manager.get_source()[self.cursor..],
+            RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+            &mut self.diagnostics,
+        ).is_some()
+    }
+
     fn lex_helper(&mut self, until: Vec<char>, should_check_paren: bool) -> Vec<Token> {
         let mut tokens = Vec::new();
         loop {
@@ -899,10 +949,10 @@ impl Lexer {
                 c if self.is_valid_comment(c) => {
                     self.lex_comment(&mut tokens);
                 }
-                c if is_valid_identifier_start_code_point(c) => {
+                _ if self.is_start_of_identifier() => {
                     self.lex_identifier(&mut tokens, true);
                 }
-                c if c.is_ascii_digit() || !should_run_custom_match => {
+                _ if self.is_valid_digit() || !should_run_custom_match => {
                     self.lex_number(&mut tokens);
                 }
                 '$' => {
@@ -982,10 +1032,12 @@ impl Lexer {
                     let span = self.skip_while(|c| c == ':');
                     tokens.push(Token::new(TokenKind::Colon, span));
                 }
-                c if Identifier::is_operator_start_code_point(c) => {
-                    let span =
-                        self.skip_while(|c| Identifier::is_operator_continuation_code_point(c));
-                    tokens.push(Token::new(TokenKind::Operator, span));
+                _ if self.is_valid_operator_start() => {
+                    // let span =
+                    //     self.skip_while(|c| Identifier::is_operator_continuation_code_point(c));
+                    // tokens.push(Token::new(TokenKind::Operator, span));
+
+                    self.lex_operator(&mut tokens);
                 }
                 '"' => {
                     self.lex_double_quoted_string(&mut tokens);
@@ -1401,6 +1453,7 @@ impl Lexer {
     }
 
     pub fn lex(&mut self) -> Vec<Token> {
+        self.local_lexer_matcher.init(None, &mut self.diagnostics);
         let cursor = self.cursor;
         let mut tokens = self.lex_helper(Vec::new(), true);
         let mut i = 0;
