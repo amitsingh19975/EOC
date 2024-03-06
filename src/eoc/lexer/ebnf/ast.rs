@@ -3,11 +3,12 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt::{Debug, Display},
-    hash::Hash,
+    hash::Hash, slice::Iter,
 };
 
 use crate::eoc::{
-    ast::identifier::Identifier, lexer::{
+    ast::identifier::Identifier,
+    lexer::{
         str_utils::ByteToCharIter,
         token::{Token, TokenKind},
         utils::{
@@ -15,12 +16,34 @@ use crate::eoc::{
             is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point,
             ParenMatching,
         },
-    }, utils::{
+    },
+    utils::{
         diagnostic::{Diagnostic, DiagnosticLevel, DiagnosticReporter},
         source_manager::{SourceManager, SourceManagerDiagnosticInfo},
         span::Span,
-    }
+    },
 };
+
+#[derive(Clone, Copy)]
+pub(crate) struct RelativeSourceManager<'a>(&'a SourceManager, u32);
+
+impl<'a> RelativeSourceManager<'a> {
+    pub(crate) fn new(source_manager: &'a SourceManager, base_pos: u32) -> Self {
+        Self(source_manager, base_pos)
+    }
+
+    pub(crate) fn get_source_info(&self, span: Span) -> SourceManagerDiagnosticInfo {
+        self.0.get_source_info(self.abs_span(span))
+    }
+
+    pub(crate) fn fix_span(&self, span: Span) -> Span {
+        self.0.fix_span(self.abs_span(span))
+    }
+
+    pub(crate) fn abs_span(&self, span: Span) -> Span {
+        span.relative(self.1)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum BinaryOperator {
@@ -260,7 +283,13 @@ impl<'a> EbnfParser<'a> {
         let span = token.span;
         match token.kind {
             TokenKind::Identifier => Some((
-                EbnfExpr::Identifier(self.get_string_from_token(&token), Some((self.source_manager.get_source_info(span), self.source_manager.fix_span(span)))),
+                EbnfExpr::Identifier(
+                    self.get_string_from_token(&token),
+                    Some((
+                        self.source_manager.get_source_info(span),
+                        self.source_manager.fix_span(span),
+                    )),
+                ),
                 span,
             )),
             TokenKind::Terminal => Some(self.get_terminal_from_token(&token)),
@@ -550,7 +579,7 @@ impl FlattenEbnfExpr {
                 }
 
                 1
-            },
+            }
             FlattenEbnfExpr::Alternative(_, _, m)
             | FlattenEbnfExpr::Concat(_, m)
             | FlattenEbnfExpr::Extend(_, m)
@@ -608,11 +637,8 @@ impl FlattenEbnfExpr {
             FlattenEbnfExpr::Optional(o, ..) => {
                 let max_byte_len = o.get_max_byte_len(Some(env));
                 Self::Optional(o, max_byte_len)
-            
             }
-            FlattenEbnfExpr::Repetition(o, ..) => {
-                Self::Repetition(o, u8::MAX)
-            }
+            FlattenEbnfExpr::Repetition(o, ..) => Self::Repetition(o, u8::MAX),
             FlattenEbnfExpr::Statements(v, ..) => {
                 let mut max_byte_len = 1u8;
                 for expr in v.iter() {
@@ -620,7 +646,7 @@ impl FlattenEbnfExpr {
                 }
                 Self::Statements(v, max_byte_len)
             }
-            _ => self
+            _ => self,
         }
     }
 
@@ -771,23 +797,20 @@ impl FlattenEbnfExpr {
 
     fn match_expr<'a>(
         &self,
+        matcher: &EbnfParserMatcher,
         s: &'a [u8],
         env: &HashMap<String, EbnfParserEnvVariable>,
+        source_manager: RelativeSourceManager<'a>,
         diagnostic: &mut Diagnostic,
     ) -> Option<&'a [u8]> {
         match self {
             FlattenEbnfExpr::Identifier(id, .., info) => {
                 if NativeCallKind::is_valid_name(id) {
                     let kind = NativeCallKind::from(id.as_str());
-                    if let Some(c) = ByteToCharIter::new(s).next() {
-                        if kind.call(c) {
-                            return Some(&s[0..c.len_utf8()]);
-                        }
-                    }
-                    return None;
+                    return kind.call(matcher, s, source_manager, diagnostic);
                 }
                 if let Some(el) = env.get(id) {
-                    el.match_expr(s, env, diagnostic)
+                    el.match_expr(matcher, s, env, source_manager, diagnostic)
                 } else {
                     if let Some((info, span)) = info {
                         diagnostic
@@ -813,7 +836,7 @@ impl FlattenEbnfExpr {
                     }
 
                     for expr in v.iter() {
-                        if let Some(s) = expr.match_expr(s, env, diagnostic) {
+                        if let Some(s) = expr.match_expr(matcher, s, env, source_manager, diagnostic) {
                             return Some(s);
                         }
                     }
@@ -825,7 +848,8 @@ impl FlattenEbnfExpr {
 
                 for expr in v.iter() {
                     let temp_source = &s[end..];
-                    if let Some(s_) = expr.match_expr(temp_source, env, diagnostic) {
+                    if let Some(s_) = expr.match_expr(matcher, temp_source, env, source_manager, diagnostic)
+                    {
                         end += s_.len();
                     } else {
                         return None;
@@ -840,7 +864,7 @@ impl FlattenEbnfExpr {
                 let mut iter = v.iter();
                 let first = iter.next().unwrap();
 
-                let matched = first.match_expr(s, env, diagnostic);
+                let matched = first.match_expr(matcher, s, env, source_manager, diagnostic);
                 if matched.is_none() {
                     return None;
                 }
@@ -853,8 +877,7 @@ impl FlattenEbnfExpr {
                         let end = ByteToCharIter::new(&matched[i..])
                             .utf8_len_after_skip(e.get_max_byte_len(Some(env)) as usize);
                         let temp_source = &matched[i..i + end];
-                        if let Some(_) =
-                            e.match_expr(temp_source, env, diagnostic)
+                        if let Some(_) = e.match_expr(matcher, temp_source, env, source_manager, diagnostic)
                         {
                             matched = &matched[0..i];
                             break;
@@ -880,7 +903,7 @@ impl FlattenEbnfExpr {
                 let mut start = 0usize;
                 for expr in v.iter() {
                     matched = &s[start..];
-                    if let Some(s_) = expr.match_expr(matched, env, diagnostic) {
+                    if let Some(s_) = expr.match_expr(matcher, matched, env, source_manager, diagnostic) {
                         start += s_.len();
                         end += s_.len();
                     } else {
@@ -897,7 +920,7 @@ impl FlattenEbnfExpr {
             FlattenEbnfExpr::Optional(o, ..) => {
                 let mut end = 0usize;
 
-                if let Some(s_) = o.match_expr(s, env, diagnostic) {
+                if let Some(s_) = o.match_expr(matcher, s, env, source_manager, diagnostic) {
                     end += s_.len();
                 }
 
@@ -905,7 +928,7 @@ impl FlattenEbnfExpr {
             }
             FlattenEbnfExpr::Repetition(v, ..) => {
                 let mut end = 0usize;
-                while let Some(s_) = v.match_expr(&s[end..], env, diagnostic) {
+                while let Some(s_) = v.match_expr(matcher, &s[end..], env, source_manager, diagnostic) {
                     end += s_.len();
                 }
 
@@ -1055,7 +1078,7 @@ impl Display for FlattenEbnfExpr {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum NativeCallKind {
+pub(crate) enum NativeCallKind {
     StartIdentifier,
     ContIdentifier,
     Whitespace,
@@ -1067,9 +1090,10 @@ enum NativeCallKind {
     OctDigit,
     BinDigit,
     AlphaNumeric,
-    Alpha,
     StartOperator,
     ContOperator,
+    Integer,
+    FloatingPoint,
 }
 
 impl NativeCallKind {
@@ -1086,48 +1110,129 @@ impl NativeCallKind {
             Self::OctDigit => "oct_digit",
             Self::BinDigit => "bin_digit",
             Self::AlphaNumeric => "alpha_numeric",
-            Self::Alpha => "alpha",
             Self::StartOperator => "start_operator",
             Self::ContOperator => "cont_operator",
+            Self::Integer => "integer",
+            Self::FloatingPoint => "floating_point",
         }
     }
 
-    fn call(&self, c: char) -> bool {
-        match self {
-            Self::StartIdentifier => is_valid_identifier_start_code_point(c),
-            Self::ContIdentifier => is_valid_identifier_continuation_code_point(c),
-            Self::Whitespace => c.is_whitespace(),
-            Self::NewLine => c == '\n',
-            Self::Tab => c == '\t',
-            Self::Digit => c.is_digit(10),
-            Self::Letter => c.is_alphabetic(),
-            Self::HexDigit => c.is_digit(16),
-            Self::OctDigit => c.is_digit(8),
-            Self::BinDigit => c.is_digit(2),
-            Self::AlphaNumeric => c.is_alphanumeric(),
-            Self::Alpha => c.is_alphabetic(),
-            Self::StartOperator => Identifier::is_operator_start_code_point(c),
-            Self::ContOperator => Identifier::is_operator_continuation_code_point(c),
+    fn call<'b>(
+        &self,
+        matcher: &EbnfParserMatcher,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        let c = ByteToCharIter::new(s).next();
+        if c.is_none() {
+            return None;
+        }
 
+        let c = c.unwrap();
+
+        match self {
+            Self::StartIdentifier => {
+                if is_valid_identifier_start_code_point(c) {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::ContIdentifier => {
+                if is_valid_identifier_continuation_code_point(c) {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::Whitespace => {
+                if c.is_whitespace() {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::NewLine => {
+                if c == '\n' {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::Tab => {
+                if c == '\t' {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::Digit => {
+                if c.is_digit(10) {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::Letter => {
+                if c.is_alphabetic() {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::HexDigit => {
+                if c.is_digit(16) {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::OctDigit => {
+                if c.is_digit(8) {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::BinDigit => {
+                if c.is_digit(2) {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::AlphaNumeric => {
+                if c.is_alphanumeric() {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::StartOperator => {
+                if Identifier::is_operator_start_code_point(c) {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::ContOperator => {
+                if Identifier::is_operator_continuation_code_point(c) {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::Integer => matcher.match_native_integer(s, source_manager, diagnostic),
+            Self::FloatingPoint => matcher.match_native_floating_point(s, source_manager, diagnostic)
         }
     }
 
     fn is_valid_name(name: &str) -> bool {
         match name {
-            "start_identifier"
-            | "cont_identifier"
-            | "whitespace"
-            | "new_line"
-            | "tab"
-            | "digit"
-            | "letter"
-            | "hex_digit"
-            | "oct_digit"
-            | "bin_digit"
-            | "alpha_numeric"
-            | "start_operator"
-            | "cont_operator"
-            | "alpha" => true,
+            "start_identifier" | "cont_identifier" | "whitespace" | "new_line" | "tab"
+            | "digit" | "letter" | "hex_digit" | "oct_digit" | "bin_digit" | "alpha_numeric"
+            | "start_operator" | "floating_point" | "integer" | "cont_operator" => true,
             _ => false,
         }
     }
@@ -1159,9 +1264,10 @@ impl From<&str> for NativeCallKind {
             "oct_digit" => Self::OctDigit,
             "bin_digit" => Self::BinDigit,
             "alpha_numeric" => Self::AlphaNumeric,
-            "alpha" => Self::Alpha,
             "start_operator" => Self::StartOperator,
             "cont_operator" => Self::ContOperator,
+            "integer" => Self::Integer,
+            "floating_point" => Self::FloatingPoint,
             _ => unreachable!("Unknown native call kind '{}'", s),
         }
     }
@@ -1208,24 +1314,15 @@ impl EbnfParserEnvVariable {
 
     fn match_expr<'a>(
         &self,
+        matcher: &EbnfParserMatcher,
         s: &'a [u8],
         env: &HashMap<String, EbnfParserEnvVariable>,
+        source_manager: RelativeSourceManager<'a>,
         diagnostic: &mut Diagnostic,
     ) -> Option<&'a [u8]> {
         match self {
-            Self::Expr(expr) => expr.match_expr(s, env, diagnostic),
-            Self::NativeCall(func_name) => {
-                if let Some(c) = ByteToCharIter::new(s).next() {
-                    if func_name.call(c) {
-                        let len = c.len_utf8();
-                        Some(&s[..len])
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
+            Self::Expr(expr) => expr.match_expr(matcher, s, env, source_manager, diagnostic),
+            Self::NativeCall(func_name) => func_name.call(matcher, s, source_manager, diagnostic),
         }
     }
 
@@ -1239,7 +1336,7 @@ impl EbnfParserEnvVariable {
     fn recalculate_max_byte_len(self, env: &mut HashMap<String, EbnfParserEnvVariable>) -> Self {
         match self {
             Self::Expr(expr) => Self::Expr(expr.recalculate_max_byte_len(env)),
-            _ => self
+            _ => self,
         }
     }
 }
@@ -1248,7 +1345,7 @@ impl FlattenEbnfExpr {
     fn init_env<'a>(
         self,
         env: &mut HashMap<String, EbnfParserEnvVariable>,
-        def: &mut Vec<String>,
+        def: &mut EbnfParserMatcherDef,
         diagnostic: &mut Diagnostic,
     ) {
         match self {
@@ -1261,7 +1358,7 @@ impl FlattenEbnfExpr {
                 let mut new_expr = EbnfParserEnvVariable::Expr(*expr);
                 if is_def {
                     if !def.contains(&name) {
-                        def.push(name.clone());
+                        def.insert(name.clone());
                     }
                 }
                 if let Some(old_expr) = env.remove(&name) {
@@ -1310,28 +1407,54 @@ impl FlattenEbnfExpr {
                     false
                 }
             }
-            _ => false
+            _ => false,
         }
+    }
+}
+
+struct EbnfParserMatcherDef(HashSet<String>, Vec<String>);
+
+impl EbnfParserMatcherDef {
+    fn new() -> Self {
+        Self(HashSet::new(), Vec::new())
+    }
+
+    fn contains(&self, name: &str) -> bool {
+        self.0.contains(name)
+    }
+
+    fn ordered_iter(&self) -> Iter<'_, String> {
+        self.1.iter()
+    }
+
+    fn insert(&mut self, name: String) {
+        self.0.insert(name.clone());
+        self.1.push(name);
+    }
+
+    fn keys(&self) -> std::collections::hash_set::Iter<'_, String> {
+        self.0.iter()
     }
 }
 
 pub(crate) struct EbnfParserMatcher {
     env: HashMap<String, EbnfParserEnvVariable>,
-    def: Vec<String>,
+    def: EbnfParserMatcherDef
 }
 
 impl EbnfParserMatcher {
     pub(crate) fn new() -> Self {
         Self {
             env: HashMap::new(),
-            def: Vec::new(),
+            def: EbnfParserMatcherDef::new(),
         }
     }
 
     fn add_identifier_env(&mut self, diagnostic: &mut Diagnostic) {
         self.add_native_call(NativeCallKind::StartIdentifier);
         self.add_native_call(NativeCallKind::ContIdentifier);
-        let rep_expr = FlattenEbnfExpr::Identifier(NativeCallKind::ContIdentifier.to_string(), None);
+        let rep_expr =
+            FlattenEbnfExpr::Identifier(NativeCallKind::ContIdentifier.to_string(), None);
         let expr = FlattenEbnfExpr::Concat(
             vec![
                 FlattenEbnfExpr::Identifier(NativeCallKind::StartIdentifier.to_string(), None),
@@ -1370,54 +1493,24 @@ impl EbnfParserMatcher {
         operator.init_env(&mut self.env, &mut self.def, diagnostic);
     }
 
-    fn add_is_digit(&mut self) {
-        self.add_native_call(NativeCallKind::Digit);
-    }
-
-    fn add_is_hex_digit(&mut self) {
-        self.add_native_call(NativeCallKind::HexDigit);
-    }
-
-    fn add_is_octal_digit(&mut self) {
-        self.add_native_call(NativeCallKind::OctDigit);
-    }
-
-    fn add_is_binary_digit(&mut self) {
-        self.add_native_call(NativeCallKind::BinDigit);
-    }
-
-    fn add_is_alpha(&mut self) {
-        self.add_native_call(NativeCallKind::Letter);
-    }
-
-    fn add_is_alphanumeric(&mut self) {
-        self.add_native_call(NativeCallKind::AlphaNumeric);
-    }
-
-    fn add_is_whitespace(&mut self) {
-        self.add_native_call(NativeCallKind::Whitespace);
-    }
-
-    fn add_is_newline(&mut self) {
-        self.add_native_call(NativeCallKind::NewLine);
-    }
-
-    fn add_is_tab(&mut self) {
-        self.add_native_call(NativeCallKind::Tab);
-    }
-
     pub(crate) fn init(&mut self, expr: FlattenEbnfExpr, diagnostic: &mut Diagnostic) {
         self.add_identifier_env(diagnostic);
-        self.add_is_digit();
-        self.add_is_hex_digit();
-        self.add_is_octal_digit();
-        self.add_is_binary_digit();
-        self.add_is_alpha();
-        self.add_is_alphanumeric();
-        self.add_is_whitespace();
-        self.add_is_newline();
-        self.add_is_tab();
         self.add_operator_env(diagnostic);
+        self.add_native_call(NativeCallKind::Integer);
+        self.add_native_call(NativeCallKind::FloatingPoint);
+        self.add_native_call(NativeCallKind::Whitespace);
+        self.add_native_call(NativeCallKind::NewLine);
+        self.add_native_call(NativeCallKind::Tab);
+        self.add_native_call(NativeCallKind::Digit);
+        self.add_native_call(NativeCallKind::Letter);
+        self.add_native_call(NativeCallKind::HexDigit);
+        self.add_native_call(NativeCallKind::OctDigit);
+        self.add_native_call(NativeCallKind::BinDigit);
+        self.add_native_call(NativeCallKind::AlphaNumeric);
+        self.add_native_call(NativeCallKind::StartIdentifier);
+        self.add_native_call(NativeCallKind::ContIdentifier);
+        self.add_native_call(NativeCallKind::StartOperator);
+        self.add_native_call(NativeCallKind::ContOperator);
 
         expr.init_env(&mut self.env, &mut self.def, diagnostic);
         let keys = self.env.keys().map(|s| s.clone()).collect::<Vec<_>>();
@@ -1433,13 +1526,11 @@ impl EbnfParserMatcher {
         println!(
             "\ndef: {}",
             self.def
-                .iter()
+                .keys()
                 .map(|s| s.clone())
                 .collect::<Vec<_>>()
                 .join(",")
         );
-
-        
     }
 
     fn add_native_call(&mut self, kind: NativeCallKind) {
@@ -1448,7 +1539,7 @@ impl EbnfParserMatcher {
     }
 
     pub(crate) fn contains_def(&self, name: &str) -> bool {
-        self.def.contains(&name.to_owned())
+        self.def.contains(name)
     }
 
     pub(crate) fn match_native_identifier(s: &[u8]) -> Option<&[u8]> {
@@ -1475,49 +1566,418 @@ impl EbnfParserMatcher {
         None
     }
 
-    // pub(crate) fn match_native_number(s: &[u8]) -> Option<&[u8]> {
-    //     let num = self.match_native_integer(s);
+    fn get_digit<'b>(&self, s: &[u8], source_manager: RelativeSourceManager<'b>, diagnostic: &mut Diagnostic) -> Option<char> {
+        self.match_native(NativeCallKind::Digit, s, source_manager, diagnostic).map(|s| ByteToCharIter::new(s).next()).flatten()
+    }
 
-    //     if num.is_some() {
-    //         return num;
-    //     }
+    pub(crate) fn match_native_integer<'b>(
+        &self,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        if s.is_empty() {
+            return None;
+        }
 
-    //     self.match_native_floating_point(s)
-    // }
+        let mut iter = ByteToCharIter::new(s).peekable();
+        let mut end = 0usize;
+
+        if iter.peek() == Some(&'.') {
+            return None;
+        }
+
+        let mut has_dot = false;
+        while let Some(ch) = iter.peek() {
+            has_dot = (*ch == '.') || has_dot;
+
+            match *ch {
+                'e' | 'E' | 'p' | 'P' if has_dot => {
+                    return None;
+                }
+                ch if ch.is_whitespace() => break,
+                _ => {
+                    iter.next();
+                }
+            }
+        }
+
+        let mut matched = s;
+
+        let ch = self.get_digit(matched, source_manager, diagnostic);
+        
+        if ch.is_none() {
+            return None;
+        }
+
+        let ch = ch.unwrap();
+        
+        let is_start_with_zero = ch == '0';
+        
+        end += ch.len_utf8();
+        matched = &s[end..];
+
+        if is_start_with_zero {
+            let ch = ByteToCharIter::new(matched).next();
+            let mut underscore_count = 0usize;
+            if ch == Some('x') {
+                end += 1;
+                matched = &s[end..];
+                let start = end;
+                while let Some(ch) = ByteToCharIter::new(matched).next() {
+                    if let Some(ch) = self.match_native(NativeCallKind::HexDigit, matched, source_manager, diagnostic) {
+                        end += ch.len();
+                        matched = &s[end..];
+                    } else if ch == '_' {
+                        end += ch.len_utf8();
+                        matched = &s[end..];
+                        underscore_count += 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                println!("matched: {:?} | {} | {}", std::str::from_utf8(matched), end, underscore_count);
+                if start == (end - underscore_count) {
+                    diagnostic.builder().report(DiagnosticLevel::Error, "Expecting hexadecimal after '0x', but found none", source_manager.get_source_info(Span::from_usize(start, start + 1)), None)
+                        .add_error("Hex digit must be between 0 and 9 or a and f", Some(source_manager.fix_span(Span::from_usize(start, end))))
+                        .commit();
+                }
+                return Some(&s[..end]);
+            }
+
+            if ch == Some('o') {
+                end += 1;
+                
+                matched = &s[end..];
+                let start = end;
+                while let Some(ch) = ByteToCharIter::new(matched).next() {
+                    if let Some(ch) = self.match_native(NativeCallKind::OctDigit, matched, source_manager, diagnostic) {
+                        end += ch.len();
+                        matched = &s[end..];
+                    } else if ch == '_' {
+                        end += ch.len_utf8();
+                        matched = &s[end..];
+                        underscore_count += 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                if start == (end - underscore_count) {
+                    diagnostic.builder().report(DiagnosticLevel::Error, "Expecting octal after '0o', but found none", source_manager.get_source_info(Span::from_usize(start, start + 1)), None)
+                        .add_error("Octal digit must be between 0 and 7", Some(source_manager.fix_span(Span::from_usize(start, end))))
+                        .commit();
+                }
+
+                return Some(&s[..end]);
+            }
+
+            if ch == Some('b') {
+                end += 1;
+                matched = &s[end..];
+
+                let start = end;
+
+                while let Some(ch) = ByteToCharIter::new(matched).next() {
+                    if let Some(ch) = self.match_native(NativeCallKind::BinDigit, matched, source_manager, diagnostic) {
+                        end += ch.len();
+                        matched = &s[end..];
+                    } else if ch == '_' {
+                        end += ch.len_utf8();
+                        matched = &s[end..];
+                        underscore_count += 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                if start == (end - underscore_count) {
+                    diagnostic.builder().report(DiagnosticLevel::Error, "Expecting binary after '0b', but found none", source_manager.get_source_info(Span::from_usize(start, start + 1)), None)
+                        .add_error("Binary digit must be 0 or 1", Some(source_manager.fix_span(Span::from_usize(start, end))))
+                        .commit();
+                }
+                println!("matched: {:?} | {}", std::str::from_utf8(matched), is_start_with_zero);
+                return Some(&s[..end]);
+            }
+        }
+
+        while let Some(ch) = ByteToCharIter::new(matched).next() {
+            if let Some(ch) = self.match_native(NativeCallKind::Digit, matched, source_manager, diagnostic) {
+                end += ch.len();
+                matched = &s[end..];
+            } else if ch == '_' {
+                end += ch.len_utf8();
+                matched = &s[end..];
+            } else {
+                break;
+            }
+        }
+        
+        if end == 0 {
+            return None;
+        }
+
+        Some(&s[..end])
+    }
+
+    pub(crate) fn match_native_floating_point<'b>(
+        &self,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        if s.is_empty() {
+            return None;
+        }
+
+        let mut iter = ByteToCharIter::new(s).peekable();
+        let mut end = 0usize;
+        let mut matched = s;
+
+        let ch = iter.peek();
+        if ch.is_none() {
+            return None;
+        }
+
+        let ch = unsafe { *ch.unwrap_unchecked() };
+        
+        let ch = match (self.get_digit(matched, source_manager, diagnostic), ch) {
+            (_, '.') => Some('.'),
+            (Some(ch), _) => Some(ch),
+            _ => None
+        };
+
+        if ch.is_none() {
+            return None;
+        }
+
+        let ch = unsafe { ch.unwrap_unchecked() };
+
+        let is_start_with_zero = ch == '0';
+        end += ch.len_utf8();
+
+        matched = &s[end..];
+
+        if is_start_with_zero && (self.get_digit(matched, source_manager, diagnostic) == Some('x')) {
+            end += 1;
+            let start = end;
+            let mut underscore_count = 0usize;
+            while let Some(ch) = ByteToCharIter::new(matched).next() {
+                if let Some(ch) = self.match_native(NativeCallKind::HexDigit, matched, source_manager, diagnostic) {
+                    end += ch.len();
+                    matched = &s[end..];
+                } else if ch == '_' {
+                    end += ch.len_utf8();
+                    matched = &s[end..];
+                    underscore_count += 1;
+                } else {
+                    break
+                }
+            }
+
+            if start == (end - underscore_count) {
+                diagnostic.builder().report(DiagnosticLevel::Error, "Expecting hexadecimal after '0x', but found none", source_manager.get_source_info(Span::from_usize(start, start + 1)), None)
+                    .add_error("Hex digit must be between 0 and 9 or a and f", Some(source_manager.fix_span(Span::from_usize(start, end))))
+                    .commit();
+                return None;
+            }
+
+            matched = &s[end..];
+
+            if self.get_digit(matched, source_manager, diagnostic) == Some('.') {
+                end += 1;
+                matched = &s[end..];
+                while let Some(ch) = ByteToCharIter::new(matched).next() {
+                    if let Some(ch) = self.match_native(NativeCallKind::HexDigit, matched, source_manager, diagnostic) {
+                        end += ch.len();
+                        matched = &s[end..];
+                    } else if ch == '_' {
+                        end += ch.len_utf8();
+                        matched = &s[end..];
+                        underscore_count += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            let ch = ByteToCharIter::new(matched).next();
+            if ch == Some('p') || ch == Some('P') {
+                end += 1;
+                matched = &s[end..];
+                let ch = ByteToCharIter::new(matched).next();
+                if ch == Some('+') || ch == Some('-') {
+                    end += 1;
+                    matched = &s[end..];
+                }
+                while let Some(ch) = ByteToCharIter::new(matched).next() {
+                    if let Some(ch) = self.match_native(NativeCallKind::Digit, matched, source_manager, diagnostic) {
+                        end += ch.len();
+                        matched = &s[end..];
+                    } else if ch == '_' {
+                        end += ch.len_utf8();
+                        matched = &s[end..];
+                        underscore_count += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            return Some(&s[..end]);
+        }
+
+        while let Some(ch) = ByteToCharIter::new(matched).next() {
+            if let Some(ch) = self.match_native(NativeCallKind::Digit, matched, source_manager, diagnostic) {
+                end += ch.len();
+                matched = &s[end..];
+            } else if ch == '_' {
+                end += ch.len_utf8();
+                matched = &s[end..];
+            } else {
+                break;
+            }
+        }
+
+        matched = &s[end..];
+        if ByteToCharIter::new(matched).next() == Some('.') {
+            end += 1;
+            matched = &s[end..];
+            while let Some(ch) = ByteToCharIter::new(matched).next() {
+                if let Some(ch) = self.match_native(NativeCallKind::Digit, matched, source_manager, diagnostic) {
+                    end += ch.len();
+                    matched = &s[end..];
+                } else if ch == '_' {
+                    end += ch.len_utf8();
+                    matched = &s[end..];
+                } else {
+                    break;
+                }
+            }
+        }
+
+        let ch = ByteToCharIter::new(matched).next();
+        if ch == Some('e') || ch == Some('E') {
+            end += 1;
+            matched = &s[end..];
+            let ch = ByteToCharIter::new(matched).next();
+            if ch == Some('+') || ch == Some('-') {
+                end += 1;
+                matched = &s[end..];
+            }
+            while let Some(ch) = ByteToCharIter::new(matched).next() {
+                if let Some(ch) = self.match_native(NativeCallKind::Digit, matched, source_manager, diagnostic) {
+                    end += ch.len();
+                    matched = &s[end..];
+                } else if ch == '_' {
+                    end += ch.len_utf8();
+                    matched = &s[end..];
+                } else {
+                    break;
+                }
+            }
+        }
+
+        if end == 0 {
+            return None;
+        }
+
+        Some(&s[..end])
+    }
+
+    pub(crate) fn match_native_operator(s: &[u8]) -> Option<&[u8]> {
+        if s.is_empty() {
+            return None;
+        }
+
+        let (first_char, _) = byte_to_char(s);
+        if first_char.is_none() {
+            return None;
+        }
+
+        if !Identifier::is_operator_start_code_point(first_char.unwrap()) {
+            return None;
+        }
+
+        let mut i = 0;
+        for c in ByteToCharIter::new(s) {
+            if !Identifier::is_operator_continuation_code_point(c) {
+                return Some(&s[i..]);
+            }
+            i += c.len_utf8();
+        }
+        None
+    }
 
     fn match_expr_helper<'b>(
-        def: &[String],
-        env: &HashMap<String, EbnfParserEnvVariable>,
+        &self,
         key: &str,
         expr: &EbnfParserEnvVariable,
         s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
         diagnostic: &mut Diagnostic,
     ) -> Option<(&'b [u8], String)> {
         match key {
             "identifier" => {
-                let temp = if !def.contains(&key.to_owned()) {
+                let temp = if !self.contains_def(key) {
                     Self::match_native_identifier(s).map(|s| (s, key.to_owned()))
                 } else {
-                    expr.match_expr(s, env, diagnostic)
+                    expr.match_expr(self, s, &self.env, source_manager, diagnostic)
+                        .map(|s| (s, key.to_owned()))
+                };
+                temp
+            }
+            "operator" => {
+                let temp = if !self.contains_def(key) {
+                    Self::match_native_operator(s).map(|s| (s, key.to_owned()))
+                } else {
+                    expr.match_expr(self, s, &self.env, source_manager, diagnostic)
+                        .map(|s| (s, key.to_owned()))
+                };
+                temp
+            }
+            "floating_point" => {
+                let temp = if !self.contains_def(key) {
+                    self.match_native_floating_point(s, source_manager, diagnostic)
+                        .map(|s| (s, key.to_owned()))
+                } else {
+                    expr.match_expr(self, s, &self.env, source_manager, diagnostic)
+                        .map(|s| (s, key.to_owned()))
+                };
+                temp
+            }
+            "integer" => {
+                let temp = if !self.contains_def(key) {
+                    self.match_native_integer(s, source_manager, diagnostic)
+                        .map(|s| (s, key.to_owned()))
+                } else {
+                    expr.match_expr(self, s, &self.env, source_manager, diagnostic)
                         .map(|s| (s, key.to_owned()))
                 };
                 temp
             }
             _ => expr
-                .match_expr(s, env, diagnostic)
+                .match_expr(self, s, &self.env, source_manager, diagnostic)
                 .map(|s| (s, key.to_owned())),
         }
     }
 
     pub(crate) fn match_expr<'b>(
         &mut self,
-        s: &'b [u8], 
-        diagnostic: &mut Diagnostic
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
     ) -> Option<(&'b [u8], String)> {
-        for d in self.def.iter() {
+        for d in self.def.ordered_iter() {
             if let Some(expr) = self.env.get(d) {
-                let temp =
-                    Self::match_expr_helper(&self.def, &self.env, d, expr, s, diagnostic);
+                let temp = self.match_expr_helper(
+                    d,
+                    expr,
+                    s,
+                    source_manager,
+                    diagnostic,
+                );
                 if temp.is_some() {
                     return temp;
                 }
@@ -1526,11 +1986,50 @@ impl EbnfParserMatcher {
         None
     }
 
-    pub(crate) fn match_expr_for<'b>(&mut self, var: &str, s: &'b [u8], diagnostic: &mut Diagnostic) -> Option<&'b [u8]> {
+    pub(crate) fn match_expr_for<'b>(
+        &self,
+        var: &str,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
         if let Some(expr) = self.env.get(var) {
-            expr.match_expr(s, &self.env, diagnostic)
+            expr.match_expr(self, s, &self.env, source_manager, diagnostic)
         } else {
             None
         }
+    }
+
+    pub(crate) fn match_identifier<'b>(
+        &self,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        self.match_expr_for("identifier", s, source_manager, diagnostic)
+    }
+
+    pub(crate) fn match_operator<'b>(
+        &self,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        self.match_expr_for("operator", s, source_manager, diagnostic)
+    }
+
+    pub(crate) fn match_native<'b>(
+        &self,
+        kind: NativeCallKind,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        self.match_expr_for(
+            kind.as_str(),
+            s,
+            source_manager,
+            diagnostic,
+        )
     }
 }
