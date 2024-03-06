@@ -1,5 +1,8 @@
 ```lexer
 
-identifier ::= '?' + identifier;
+digit = digit | '\u{0966}'..='\u{096F}';
+floating_point ::= floating_point;
 
 ```
+
+let a = 1.२331E+10
