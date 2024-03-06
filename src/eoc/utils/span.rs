@@ -86,6 +86,10 @@ impl Span {
 
         Span::from_usize(start, end + 1)
     }
+
+    pub(crate) fn relative(&self, offset: u32) -> Span {
+        Span::new(self.start + offset, self.end + offset)
+    }
 }
 
 impl MappedFile {
