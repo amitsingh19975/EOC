@@ -2027,7 +2027,7 @@ impl EbnfParserMatcher {
         self.match_expr_for("operator", s, source_manager, diagnostic)
     }
 
-    pub(crate) fn match_native<'b>(
+    pub(crate) fn try_match_native_if_exists<'b>(
         &self,
         kind: NativeCallKind,
         s: &'b [u8],
@@ -2040,6 +2040,20 @@ impl EbnfParserMatcher {
             source_manager,
             diagnostic,
         )
+    }
+
+    pub(crate) fn match_native<'b>(
+        &self,
+        kind: NativeCallKind,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        if let Some(expr) = self.env.get(kind.as_str()) {
+            expr.match_expr(self, s, &self.env, source_manager, diagnostic)
+        } else {
+            kind.call(self, s, source_manager, diagnostic)
+        }
     }
 
     pub(crate) fn has_custom_digit_lexing(&self) -> bool {
