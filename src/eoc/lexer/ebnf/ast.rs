@@ -1493,7 +1493,7 @@ impl EbnfParserMatcher {
         operator.init_env(&mut self.env, &mut self.def, diagnostic);
     }
 
-    pub(crate) fn init(&mut self, expr: FlattenEbnfExpr, diagnostic: &mut Diagnostic) {
+    pub(crate) fn init(&mut self, expr: Option<FlattenEbnfExpr>, diagnostic: &mut Diagnostic) {
         self.add_identifier_env(diagnostic);
         self.add_operator_env(diagnostic);
         self.add_native_call(NativeCallKind::Integer);
@@ -1512,7 +1512,9 @@ impl EbnfParserMatcher {
         self.add_native_call(NativeCallKind::StartOperator);
         self.add_native_call(NativeCallKind::ContOperator);
 
-        expr.init_env(&mut self.env, &mut self.def, diagnostic);
+        if let Some(expr) = expr {
+            expr.init_env(&mut self.env, &mut self.def, diagnostic);
+        }
         let keys = self.env.keys().map(|s| s.clone()).collect::<Vec<_>>();
         for key in keys {
             if let Some(e) = self.env.remove(&key) {
@@ -1542,26 +1544,22 @@ impl EbnfParserMatcher {
         self.def.contains(name)
     }
 
-    pub(crate) fn match_native_identifier(s: &[u8]) -> Option<&[u8]> {
+    pub(crate) fn match_native_identifier<'b>(&self, s: &'b [u8], source_manager: RelativeSourceManager<'b>, diagnostic: &mut Diagnostic) -> Option<&'b [u8]> {
         if s.is_empty() {
             return None;
         }
 
-        let (first_char, _) = byte_to_char(s);
-        if first_char.is_none() {
+        if self.match_native(NativeCallKind::StartIdentifier, s, source_manager, diagnostic).is_none() {
             return None;
         }
-
-        if !is_valid_identifier_start_code_point(first_char.unwrap()) {
-            return None;
-        }
-
         let mut i = 0;
-        for c in ByteToCharIter::new(s) {
-            if !is_valid_identifier_continuation_code_point(c) {
-                return Some(&s[i..]);
+        while i < s.len() {
+            let end = ByteToCharIter::new(&s[i..]).utf8_len_after_skip(1);
+            let temp_source = &s[i..i + end];
+            if self.match_native(NativeCallKind::ContIdentifier, temp_source, source_manager, diagnostic).is_none() {
+                return Some(&s[..i]);
             }
-            i += c.len_utf8();
+            i += end;
         }
         None
     }
@@ -1646,7 +1644,6 @@ impl EbnfParserMatcher {
                     }
                 }
 
-                println!("matched: {:?} | {} | {}", std::str::from_utf8(matched), end, underscore_count);
                 if start == (end - underscore_count) {
                     diagnostic.builder().report(DiagnosticLevel::Error, "Expecting hexadecimal after '0x', but found none", source_manager.get_source_info(Span::from_usize(start, start + 1)), None)
                         .add_error("Hex digit must be between 0 and 9 or a and f", Some(source_manager.fix_span(Span::from_usize(start, end))))
@@ -1706,7 +1703,6 @@ impl EbnfParserMatcher {
                         .add_error("Binary digit must be 0 or 1", Some(source_manager.fix_span(Span::from_usize(start, end))))
                         .commit();
                 }
-                println!("matched: {:?} | {}", std::str::from_utf8(matched), is_start_with_zero);
                 return Some(&s[..end]);
             }
         }
@@ -1895,7 +1891,7 @@ impl EbnfParserMatcher {
         Some(&s[..end])
     }
 
-    pub(crate) fn match_native_operator(s: &[u8]) -> Option<&[u8]> {
+    pub(crate) fn match_native_operator<'b>(&self, s: &'b [u8], source_manager: RelativeSourceManager<'b>, diagnostic: &mut Diagnostic) -> Option<&'b [u8]> {
         if s.is_empty() {
             return None;
         }
@@ -1905,16 +1901,18 @@ impl EbnfParserMatcher {
             return None;
         }
 
-        if !Identifier::is_operator_start_code_point(first_char.unwrap()) {
+        if self.match_native(NativeCallKind::StartOperator, s, source_manager, diagnostic).is_none() {
             return None;
         }
 
         let mut i = 0;
-        for c in ByteToCharIter::new(s) {
-            if !Identifier::is_operator_continuation_code_point(c) {
-                return Some(&s[i..]);
+        while i < s.len() {
+            let end = ByteToCharIter::new(&s[i..]).utf8_len_after_skip(1);
+            let temp_source = &s[i..i + end];
+            if self.match_native(NativeCallKind::ContOperator, temp_source, source_manager, diagnostic).is_none() {
+                return Some(&s[..i]);
             }
-            i += c.len_utf8();
+            i += end;
         }
         None
     }
@@ -1930,7 +1928,7 @@ impl EbnfParserMatcher {
         match key {
             "identifier" => {
                 let temp = if !self.contains_def(key) {
-                    Self::match_native_identifier(s).map(|s| (s, key.to_owned()))
+                    self.match_native_identifier(s, source_manager, diagnostic).map(|s| (s, key.to_owned()))
                 } else {
                     expr.match_expr(self, s, &self.env, source_manager, diagnostic)
                         .map(|s| (s, key.to_owned()))
@@ -1939,7 +1937,7 @@ impl EbnfParserMatcher {
             }
             "operator" => {
                 let temp = if !self.contains_def(key) {
-                    Self::match_native_operator(s).map(|s| (s, key.to_owned()))
+                    self.match_native_operator(s, source_manager, diagnostic).map(|s| (s, key.to_owned()))
                 } else {
                     expr.match_expr(self, s, &self.env, source_manager, diagnostic)
                         .map(|s| (s, key.to_owned()))
