@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::eoc::{
-    lexer::{
+    ast::identifier::Identifier, lexer::{
         str_utils::ByteToCharIter,
         token::{Token, TokenKind},
         utils::{
@@ -15,12 +15,11 @@ use crate::eoc::{
             is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point,
             ParenMatching,
         },
-    },
-    utils::{
+    }, utils::{
         diagnostic::{Diagnostic, DiagnosticLevel, DiagnosticReporter},
-        source_manager::SourceManager,
+        source_manager::{SourceManager, SourceManagerDiagnosticInfo},
         span::Span,
-    },
+    }
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -111,7 +110,7 @@ impl PartialEq<[u8]> for TerminalValue {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum EbnfExpr {
     Statements(Vec<EbnfExpr>),
-    Identifier(String, Option<Span>),
+    Identifier(String, Option<(SourceManagerDiagnosticInfo, Span)>),
     BinaryExpr(BinaryOperator, Box<EbnfExpr>, Box<EbnfExpr>),
     UnaryExpr(UnaryOperator, Box<EbnfExpr>),
     Variable {
@@ -138,7 +137,7 @@ type EbnfExprMaxByteLen = u8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FlattenEbnfExpr {
-    Identifier(String, Option<Span>),
+    Identifier(String, Option<(SourceManagerDiagnosticInfo, Span)>),
     Alternative(
         Vec<FlattenEbnfExpr>,
         HashSet<TerminalValue>,
@@ -261,7 +260,7 @@ impl<'a> EbnfParser<'a> {
         let span = token.span;
         match token.kind {
             TokenKind::Identifier => Some((
-                EbnfExpr::Identifier(self.get_string_from_token(&token), Some(span)),
+                EbnfExpr::Identifier(self.get_string_from_token(&token), Some((self.source_manager.get_source_info(span), self.source_manager.fix_span(span)))),
                 span,
             )),
             TokenKind::Terminal => Some(self.get_terminal_from_token(&token)),
@@ -774,11 +773,10 @@ impl FlattenEbnfExpr {
         &self,
         s: &'a [u8],
         env: &HashMap<String, EbnfParserEnvVariable>,
-        source_manager: &SourceManager,
         diagnostic: &mut Diagnostic,
     ) -> Option<&'a [u8]> {
         match self {
-            FlattenEbnfExpr::Identifier(id, .., span) => {
+            FlattenEbnfExpr::Identifier(id, .., info) => {
                 if NativeCallKind::is_valid_name(id) {
                     let kind = NativeCallKind::from(id.as_str());
                     if let Some(c) = ByteToCharIter::new(s).next() {
@@ -789,19 +787,18 @@ impl FlattenEbnfExpr {
                     return None;
                 }
                 if let Some(el) = env.get(id) {
-                    el.match_expr(s, env, source_manager, diagnostic)
+                    el.match_expr(s, env, diagnostic)
                 } else {
-                    if let Some(span) = *span {
-                        let info = source_manager.get_source_info(span);
+                    if let Some((info, span)) = info {
                         diagnostic
                             .builder()
                             .report(
                                 DiagnosticLevel::Error,
                                 format!("Undefined variable '{}'", id),
-                                info,
+                                info.clone(),
                                 None,
                             )
-                            .add_info("Try define variable", Some(source_manager.fix_span(span)))
+                            .add_info("Try define variable", Some(*span))
                             .commit();
                     }
                     None
@@ -816,7 +813,7 @@ impl FlattenEbnfExpr {
                     }
 
                     for expr in v.iter() {
-                        if let Some(s) = expr.match_expr(s, env, source_manager, diagnostic) {
+                        if let Some(s) = expr.match_expr(s, env, diagnostic) {
                             return Some(s);
                         }
                     }
@@ -828,7 +825,7 @@ impl FlattenEbnfExpr {
 
                 for expr in v.iter() {
                     let temp_source = &s[end..];
-                    if let Some(s_) = expr.match_expr(temp_source, env, source_manager, diagnostic) {
+                    if let Some(s_) = expr.match_expr(temp_source, env, diagnostic) {
                         end += s_.len();
                     } else {
                         return None;
@@ -843,7 +840,7 @@ impl FlattenEbnfExpr {
                 let mut iter = v.iter();
                 let first = iter.next().unwrap();
 
-                let matched = first.match_expr(s, env, source_manager, diagnostic);
+                let matched = first.match_expr(s, env, diagnostic);
                 if matched.is_none() {
                     return None;
                 }
@@ -857,7 +854,7 @@ impl FlattenEbnfExpr {
                             .utf8_len_after_skip(e.get_max_byte_len(Some(env)) as usize);
                         let temp_source = &matched[i..i + end];
                         if let Some(_) =
-                            e.match_expr(temp_source, env, source_manager, diagnostic)
+                            e.match_expr(temp_source, env, diagnostic)
                         {
                             matched = &matched[0..i];
                             break;
@@ -883,7 +880,7 @@ impl FlattenEbnfExpr {
                 let mut start = 0usize;
                 for expr in v.iter() {
                     matched = &s[start..];
-                    if let Some(s_) = expr.match_expr(matched, env, source_manager, diagnostic) {
+                    if let Some(s_) = expr.match_expr(matched, env, diagnostic) {
                         start += s_.len();
                         end += s_.len();
                     } else {
@@ -900,7 +897,7 @@ impl FlattenEbnfExpr {
             FlattenEbnfExpr::Optional(o, ..) => {
                 let mut end = 0usize;
 
-                if let Some(s_) = o.match_expr(s, env, source_manager, diagnostic) {
+                if let Some(s_) = o.match_expr(s, env, diagnostic) {
                     end += s_.len();
                 }
 
@@ -908,7 +905,7 @@ impl FlattenEbnfExpr {
             }
             FlattenEbnfExpr::Repetition(v, ..) => {
                 let mut end = 0usize;
-                while let Some(s_) = v.match_expr(&s[end..], env, source_manager, diagnostic) {
+                while let Some(s_) = v.match_expr(&s[end..], env, diagnostic) {
                     end += s_.len();
                 }
 
@@ -1070,7 +1067,9 @@ enum NativeCallKind {
     OctDigit,
     BinDigit,
     AlphaNumeric,
-    Alpha
+    Alpha,
+    StartOperator,
+    ContOperator,
 }
 
 impl NativeCallKind {
@@ -1088,6 +1087,8 @@ impl NativeCallKind {
             Self::BinDigit => "bin_digit",
             Self::AlphaNumeric => "alpha_numeric",
             Self::Alpha => "alpha",
+            Self::StartOperator => "start_operator",
+            Self::ContOperator => "cont_operator",
         }
     }
 
@@ -1105,6 +1106,9 @@ impl NativeCallKind {
             Self::BinDigit => c.is_digit(2),
             Self::AlphaNumeric => c.is_alphanumeric(),
             Self::Alpha => c.is_alphabetic(),
+            Self::StartOperator => Identifier::is_operator_start_code_point(c),
+            Self::ContOperator => Identifier::is_operator_continuation_code_point(c),
+
         }
     }
 
@@ -1121,6 +1125,8 @@ impl NativeCallKind {
             | "oct_digit"
             | "bin_digit"
             | "alpha_numeric"
+            | "start_operator"
+            | "cont_operator"
             | "alpha" => true,
             _ => false,
         }
@@ -1154,6 +1160,8 @@ impl From<&str> for NativeCallKind {
             "bin_digit" => Self::BinDigit,
             "alpha_numeric" => Self::AlphaNumeric,
             "alpha" => Self::Alpha,
+            "start_operator" => Self::StartOperator,
+            "cont_operator" => Self::ContOperator,
             _ => unreachable!("Unknown native call kind '{}'", s),
         }
     }
@@ -1202,11 +1210,10 @@ impl EbnfParserEnvVariable {
         &self,
         s: &'a [u8],
         env: &HashMap<String, EbnfParserEnvVariable>,
-        source_manager: &SourceManager,
         diagnostic: &mut Diagnostic,
     ) -> Option<&'a [u8]> {
         match self {
-            Self::Expr(expr) => expr.match_expr(s, env, source_manager, diagnostic),
+            Self::Expr(expr) => expr.match_expr(s, env, diagnostic),
             Self::NativeCall(func_name) => {
                 if let Some(c) = ByteToCharIter::new(s).next() {
                     if func_name.call(c) {
@@ -1295,9 +1302,9 @@ impl FlattenEbnfExpr {
             Self::Optional(expr, ..) | Self::Repetition(expr, ..) => {
                 expr.substitute_extend(old_name, new_name)
             }
-            Self::Identifier(name, span) => {
+            Self::Identifier(name, ..) => {
                 if name == old_name {
-                    *self = Self::Identifier(new_name.to_string(), *span);
+                    *name = new_name.to_string();
                     true
                 } else {
                     false
@@ -1308,22 +1315,20 @@ impl FlattenEbnfExpr {
     }
 }
 
-pub(crate) struct EbnfParserMatcher<'a> {
+pub(crate) struct EbnfParserMatcher {
     env: HashMap<String, EbnfParserEnvVariable>,
     def: Vec<String>,
-    diagnostic: &'a mut Diagnostic,
 }
 
-impl<'a> EbnfParserMatcher<'a> {
-    pub(crate) fn new(diagnostic: &'a mut Diagnostic) -> Self {
+impl EbnfParserMatcher {
+    pub(crate) fn new() -> Self {
         Self {
             env: HashMap::new(),
             def: Vec::new(),
-            diagnostic,
         }
     }
 
-    fn add_identifier_env(&mut self) {
+    fn add_identifier_env(&mut self, diagnostic: &mut Diagnostic) {
         self.add_native_call(NativeCallKind::StartIdentifier);
         self.add_native_call(NativeCallKind::ContIdentifier);
         let rep_expr = FlattenEbnfExpr::Identifier(NativeCallKind::ContIdentifier.to_string(), None);
@@ -1341,7 +1346,28 @@ impl<'a> EbnfParserMatcher<'a> {
             is_def: false,
         };
         let identifier = FlattenEbnfExpr::Statements(vec![statement], 1);
-        identifier.init_env(&mut self.env, &mut self.def, self.diagnostic);
+        identifier.init_env(&mut self.env, &mut self.def, diagnostic);
+    }
+
+    fn add_operator_env(&mut self, diagnostic: &mut Diagnostic) {
+        self.add_native_call(NativeCallKind::StartOperator);
+        self.add_native_call(NativeCallKind::ContOperator);
+        let rep_expr = FlattenEbnfExpr::Identifier(NativeCallKind::ContOperator.to_string(), None);
+        let expr = FlattenEbnfExpr::Concat(
+            vec![
+                FlattenEbnfExpr::Identifier(NativeCallKind::StartOperator.to_string(), None),
+                FlattenEbnfExpr::Repetition(Box::new(rep_expr), 1),
+            ],
+            1,
+        );
+
+        let statement = FlattenEbnfExpr::Variable {
+            name: "operator".to_string(),
+            expr: Box::new(expr),
+            is_def: false,
+        };
+        let operator = FlattenEbnfExpr::Statements(vec![statement], 1);
+        operator.init_env(&mut self.env, &mut self.def, diagnostic);
     }
 
     fn add_is_digit(&mut self) {
@@ -1380,8 +1406,8 @@ impl<'a> EbnfParserMatcher<'a> {
         self.add_native_call(NativeCallKind::Tab);
     }
 
-    pub(crate) fn init(&mut self, expr: FlattenEbnfExpr) {
-        self.add_identifier_env();
+    pub(crate) fn init(&mut self, expr: FlattenEbnfExpr, diagnostic: &mut Diagnostic) {
+        self.add_identifier_env(diagnostic);
         self.add_is_digit();
         self.add_is_hex_digit();
         self.add_is_octal_digit();
@@ -1391,8 +1417,9 @@ impl<'a> EbnfParserMatcher<'a> {
         self.add_is_whitespace();
         self.add_is_newline();
         self.add_is_tab();
+        self.add_operator_env(diagnostic);
 
-        expr.init_env(&mut self.env, &mut self.def, self.diagnostic);
+        expr.init_env(&mut self.env, &mut self.def, diagnostic);
         let keys = self.env.keys().map(|s| s.clone()).collect::<Vec<_>>();
         for key in keys {
             if let Some(e) = self.env.remove(&key) {
@@ -1464,7 +1491,6 @@ impl<'a> EbnfParserMatcher<'a> {
         key: &str,
         expr: &EbnfParserEnvVariable,
         s: &'b [u8],
-        source_manager: &SourceManager,
         diagnostic: &mut Diagnostic,
     ) -> Option<(&'b [u8], String)> {
         match key {
@@ -1472,26 +1498,26 @@ impl<'a> EbnfParserMatcher<'a> {
                 let temp = if !def.contains(&key.to_owned()) {
                     Self::match_native_identifier(s).map(|s| (s, key.to_owned()))
                 } else {
-                    expr.match_expr(s, env, source_manager, diagnostic)
+                    expr.match_expr(s, env, diagnostic)
                         .map(|s| (s, key.to_owned()))
                 };
                 temp
             }
             _ => expr
-                .match_expr(s, env, source_manager, diagnostic)
+                .match_expr(s, env, diagnostic)
                 .map(|s| (s, key.to_owned())),
         }
     }
 
     pub(crate) fn match_expr<'b>(
         &mut self,
-        s: &'b [u8],
-        source_manager: &SourceManager,
+        s: &'b [u8], 
+        diagnostic: &mut Diagnostic
     ) -> Option<(&'b [u8], String)> {
         for d in self.def.iter() {
             if let Some(expr) = self.env.get(d) {
                 let temp =
-                    Self::match_expr_helper(&self.def, &self.env, d, expr, s, source_manager, self.diagnostic);
+                    Self::match_expr_helper(&self.def, &self.env, d, expr, s, diagnostic);
                 if temp.is_some() {
                     return temp;
                 }
@@ -1500,9 +1526,9 @@ impl<'a> EbnfParserMatcher<'a> {
         None
     }
 
-    pub(crate) fn match_expr_for<'b>(&mut self, var: &str, s: &'b [u8], source_manager: &SourceManager) -> Option<&'b [u8]> {
+    pub(crate) fn match_expr_for<'b>(&mut self, var: &str, s: &'b [u8], diagnostic: &mut Diagnostic) -> Option<&'b [u8]> {
         if let Some(expr) = self.env.get(var) {
-            expr.match_expr(s, &self.env, source_manager, self.diagnostic)
+            expr.match_expr(s, &self.env, diagnostic)
         } else {
             None
         }
