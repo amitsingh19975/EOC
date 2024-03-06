@@ -1520,17 +1520,17 @@ impl EbnfParserMatcher {
                 self.env.insert(key, expr);
             }
         }
-        for (name, value) in self.env.iter() {
-            println!("{}: {}", name, value);
-        }
-        println!(
-            "\ndef: {}",
-            self.def
-                .keys()
-                .map(|s| s.clone())
-                .collect::<Vec<_>>()
-                .join(",")
-        );
+        // for (name, value) in self.env.iter() {
+        //     println!("{}: {}", name, value);
+        // }
+        // println!(
+        //     "\ndef: {}",
+        //     self.def
+        //         .keys()
+        //         .map(|s| s.clone())
+        //         .collect::<Vec<_>>()
+        //         .join(",")
+        // );
     }
 
     fn add_native_call(&mut self, kind: NativeCallKind) {
@@ -1588,18 +1588,27 @@ impl EbnfParserMatcher {
         }
 
         let mut has_dot = false;
+        let has_hex = s.starts_with(b"0x") || s.starts_with(b"0X");
+
+        let mut has_e = false;
+        let mut has_p = false;
+
         while let Some(ch) = iter.peek() {
             has_dot = (*ch == '.') || has_dot;
 
+            has_e = (*ch == 'e' || *ch == 'E') || has_e;
+            has_p = (*ch == 'p' || *ch == 'P') || has_p;
+
             match *ch {
-                'e' | 'E' | 'p' | 'P' if has_dot => {
-                    return None;
-                }
                 ch if ch.is_whitespace() => break,
                 _ => {
                     iter.next();
                 }
             }
+        }
+
+        if has_dot || (!has_hex && has_e) || has_p {
+            return None;
         }
 
         let mut matched = s;
