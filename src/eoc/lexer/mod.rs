@@ -879,7 +879,38 @@ impl Lexer {
 
     fn lex_helper(&mut self, until: Vec<char>, should_check_paren: bool) -> Vec<Token> {
         let mut tokens = Vec::new();
+        let mut loop_iterations = 0usize;
+        let mut last_cursor: Option<usize> = None;
+
         loop {
+            if let Some(last_cursor) = last_cursor {
+                if last_cursor == self.cursor {
+                    if loop_iterations > 5 {
+                        self.diagnostics
+                            .builder()
+                            .report(
+                                DiagnosticLevel::Error,
+                                "Infinite loop detected",
+                                self.source_manager
+                                    .get_source_info(Span::from_usize(self.cursor, self.cursor + 1)),
+                                None,
+                            )
+                            .add_error(
+                                "Infinite loop detected",
+                                Some(
+                                    self.source_manager
+                                        .fix_span(Span::from_usize(self.cursor, self.cursor + 1)),
+                                ),
+                            )
+                            .commit();
+                        break;
+                    }
+
+                    loop_iterations += 1;
+                } else {
+                    loop_iterations = 0;
+                }
+            }
             let ch = self.peek_char();
 
             if ch.is_none() {
@@ -1070,6 +1101,8 @@ impl Lexer {
                     )
                 }
             }
+
+            last_cursor = Some(self.cursor);
         }
 
         if should_check_paren {
