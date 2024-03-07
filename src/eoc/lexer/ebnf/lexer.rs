@@ -87,6 +87,7 @@ impl<'a> EbnfLexer<'a> {
     }
 
     fn lex_terminal(&mut self, tokens: &mut Vec<Token>) {
+        let start_span = Span::from_usize(self.cursor, self.cursor + 1);
         let start_quote = self.next_char().unwrap();
         let start = self.cursor;
         let end_quote = match start_quote {
@@ -94,6 +95,7 @@ impl<'a> EbnfLexer<'a> {
             '"' => '"',
             _ => unreachable!(),
         };
+
 
         let span = self.skip_while(|ch| ch != end_quote);
         
@@ -104,6 +106,13 @@ impl<'a> EbnfLexer<'a> {
             tokens.push(token);
         } else {
             let info = self.source_manager.get_source_info(span);
+            let current_cursor = self.cursor;
+            self.cursor = (start_span.start + 1) as usize;
+
+            let mut quote_span = self.skip_while(|ch| ch != ';');
+            self.cursor = current_cursor;
+            quote_span.start = start_span.start + 1;
+
             self.diagnostics
                 .builder()
                 .report(
@@ -116,7 +125,14 @@ impl<'a> EbnfLexer<'a> {
                     format!("Add closing '{}' quote", end_quote),
                     Some(
                         self.source_manager
-                            .fix_span(Span::from_usize(self.end - 1, self.end)),
+                            .fix_span(start_span),
+                    ),
+                )
+                .add_info(
+                    "String literal started here".to_string(),
+                    Some(
+                        self.source_manager
+                            .fix_span(quote_span),
                     ),
                 )
                 .commit();
