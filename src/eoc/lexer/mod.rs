@@ -954,6 +954,7 @@ impl Lexer {
                 let span = Span::from_usize(self.cursor, end);
                 tokens.push(Token::new(kind, span));
                 self.cursor = end;
+                last_cursor = Some(self.cursor);
                 continue;
             }
 
@@ -1083,10 +1084,6 @@ impl Lexer {
                     tokens.push(Token::new(TokenKind::Colon, span));
                 }
                 _ if self.is_valid_operator_start() => {
-                    // let span =
-                    //     self.skip_while(|c| Identifier::is_operator_continuation_code_point(c));
-                    // tokens.push(Token::new(TokenKind::Operator, span));
-
                     self.lex_operator(&mut tokens);
                 }
                 '"' => {
