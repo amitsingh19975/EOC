@@ -855,7 +855,11 @@ impl FlattenEbnfExpr {
                         return None;
                     }
                 }
-                Some(&s[..end])
+                if end == 0 {
+                    None
+                } else {
+                    Some(&s[..end])
+                }
             }
             FlattenEbnfExpr::Exception(v, ..) => {
                 if v.is_empty() {
@@ -932,7 +936,12 @@ impl FlattenEbnfExpr {
                     end += s_.len();
                 }
 
-                Some(&s[..end])
+                if end == 0 {
+                    None
+                } else {
+                    Some(&s[..end])
+                }
+
             }
             FlattenEbnfExpr::Terminal(t) => {
                 let end = t.len_utf8();
@@ -1442,7 +1451,11 @@ type EbnfParserMatcherEnv = HashMap<String, EbnfParserEnvVariable>;
 
 pub(crate) struct EbnfParserMatcher {
     env: EbnfParserMatcherEnv,
-    def: EbnfParserMatcherDef
+    def: EbnfParserMatcherDef,
+    identifier_sym: UniqueString,
+    operator_sym: UniqueString,
+    integer_sym: UniqueString,
+    fp_sym: UniqueString,
 }
 
 impl EbnfParserMatcher {
@@ -1450,6 +1463,10 @@ impl EbnfParserMatcher {
         Self {
             env: HashMap::new(),
             def: EbnfParserMatcherDef::new(),
+            identifier_sym: UniqueString::new("identifier"),
+            operator_sym: UniqueString::new("operator"),
+            integer_sym: UniqueString::new("integer"),
+            fp_sym: UniqueString::new("floating_point"),
         }
     }
 
@@ -1555,7 +1572,8 @@ impl EbnfParserMatcher {
         if self.match_native(NativeCallKind::StartIdentifier, s, source_manager, diagnostic).is_none() {
             return None;
         }
-        let mut i = 0;
+
+        let mut i = 1;
         while i < s.len() {
             let end = ByteToCharIter::new(&s[i..]).utf8_len_after_skip(1);
             let temp_source = &s[i..i + end];
@@ -1564,7 +1582,8 @@ impl EbnfParserMatcher {
             }
             i += end;
         }
-        None
+        
+        Some(&s[..i])
     }
 
     fn get_digit<'b>(&self, s: &[u8], source_manager: RelativeSourceManager<'b>, diagnostic: &mut Diagnostic) -> Option<char> {
@@ -1898,17 +1917,11 @@ impl EbnfParserMatcher {
         if s.is_empty() {
             return None;
         }
-
-        let (first_char, _) = byte_to_char(s);
-        if first_char.is_none() {
-            return None;
-        }
-
         if self.match_native(NativeCallKind::StartOperator, s, source_manager, diagnostic).is_none() {
             return None;
         }
 
-        let mut i = 0;
+        let mut i = 1;
         while i < s.len() {
             let end = ByteToCharIter::new(&s[i..]).utf8_len_after_skip(1);
             let temp_source = &s[i..i + end];
@@ -1917,7 +1930,8 @@ impl EbnfParserMatcher {
             }
             i += end;
         }
-        None
+        
+        Some(&s[..i])
     }
 
     fn match_expr_helper<'b>(
@@ -1930,7 +1944,7 @@ impl EbnfParserMatcher {
     ) -> Option<(&'b [u8], TokenKind)> {
         let key = symbol.as_str();
         match key {
-            "identifier" => {
+            _ if key == self.identifier_sym.as_str() => {
                 let temp = if !self.contains_def(key) {
                     self.match_native_identifier(s, source_manager, diagnostic).map(|s| (s, TokenKind::Identifier))
                 } else {
@@ -1939,7 +1953,7 @@ impl EbnfParserMatcher {
                 };
                 temp
             }
-            "operator" => {
+            _ if key == self.operator_sym.as_str() => {
                 let temp = if !self.contains_def(key) {
                     self.match_native_operator(s, source_manager, diagnostic).map(|s| (s, TokenKind::Operator))
                 } else {
@@ -1948,7 +1962,7 @@ impl EbnfParserMatcher {
                 };
                 temp
             }
-            "floating_point" => {
+            _ if key == self.fp_sym.as_str() => {
                 let temp = if !self.contains_def(key) {
                     self.match_native_floating_point(s, source_manager, diagnostic)
                         .map(|s| (s, TokenKind::FloatingPoint))
@@ -1958,7 +1972,7 @@ impl EbnfParserMatcher {
                 };
                 temp
             }
-            "integer" => {
+            _ if key == self.integer_sym.as_str() => {
                 let temp = if !self.contains_def(key) {
                     self.match_native_integer(s, source_manager, diagnostic)
                         .map(|s| (s, TokenKind::Integer))
@@ -1989,6 +2003,7 @@ impl EbnfParserMatcher {
                     source_manager,
                     diagnostic,
                 );
+
                 if temp.is_some() {
                     return temp;
                 }
@@ -2005,7 +2020,8 @@ impl EbnfParserMatcher {
         diagnostic: &mut Diagnostic,
     ) -> Option<&'b [u8]> {
         if let Some(expr) = self.env.get(var) {
-            expr.match_expr(self, s, &self.env, source_manager, diagnostic)
+            let temp = expr.match_expr(self, s, &self.env, source_manager, diagnostic);
+            temp
         } else {
             None
         }
@@ -2017,7 +2033,11 @@ impl EbnfParserMatcher {
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &mut Diagnostic,
     ) -> Option<&'b [u8]> {
-        self.match_expr_for("identifier", s, source_manager, diagnostic)
+        if let Some(expr) = self.env.get(self.identifier_sym.as_str()) {
+            self.match_expr_helper(self.identifier_sym, expr, s, source_manager, diagnostic).map(|(s, _)| s)
+        } else {
+            self.match_native_identifier(s, source_manager, diagnostic)
+        }
     }
 
     pub(crate) fn match_operator<'b>(
@@ -2026,7 +2046,11 @@ impl EbnfParserMatcher {
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &mut Diagnostic,
     ) -> Option<&'b [u8]> {
-        self.match_expr_for("operator", s, source_manager, diagnostic)
+        if let Some(expr) = self.env.get(self.operator_sym.as_str()) {
+            self.match_expr_helper(self.operator_sym, expr, s, source_manager, diagnostic).map(|(s, _)| s)
+        } else {
+            self.match_native_operator(s, source_manager, diagnostic)
+        }
     }
 
     pub(crate) fn try_match_native_if_exists<'b>(
@@ -2063,14 +2087,14 @@ impl EbnfParserMatcher {
     }
 
     pub(crate) fn has_custom_integer_lexing(&self) -> bool {
-        self.contains_def("integer") || self.has_custom_digit_lexing()
+        self.contains_def(self.integer_sym.as_str()) || self.has_custom_digit_lexing()
     }
 
     pub(crate) fn has_custom_floating_point_lexing(&self) -> bool {
-        self.contains_def("floating_point") || self.has_custom_integer_lexing()
+        self.contains_def(self.fp_sym.as_str()) || self.has_custom_integer_lexing()
     }
 
     pub(crate) fn has_custom_identifier_lexing(&self) -> bool {
-        self.contains_def("identifier")
+        self.contains_def(self.identifier_sym.as_str())
     }
 }
