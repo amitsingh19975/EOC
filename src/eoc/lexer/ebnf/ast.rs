@@ -1385,7 +1385,7 @@ impl FlattenEbnfExpr {
     fn get_unique_name(name: &str, env: &EbnfParserMatcherEnv) -> String {
         let mut i = 0;
         let mut new_name = name.to_owned();
-        while env.contains_key(&new_name) || (new_name == name) {
+        while env.contains(&new_name) || (new_name == name) {
             i += 1;
             new_name = format!("{}_{}", name, i);
         }
@@ -1447,7 +1447,101 @@ impl EbnfParserMatcherDef {
     }
 }
 
-type EbnfParserMatcherEnv = HashMap<String, EbnfParserEnvVariable>;
+struct EbnfParserMatcherEnv{
+    hash: HashMap<String, EbnfParserEnvVariable>,
+    identifiers: Option<EbnfParserEnvVariable>,
+    operators: Option<EbnfParserEnvVariable>,
+    integer: Option<EbnfParserEnvVariable>,
+    floating_point: Option<EbnfParserEnvVariable>,
+}
+
+impl EbnfParserMatcherEnv {
+    fn new() -> Self {
+        Self {
+            hash: HashMap::new(),
+            identifiers: None,
+            operators: None,
+            integer: None,
+            floating_point: None,
+        }
+    }
+
+    fn keys(&self) -> Vec<String> {
+        let mut temp: Vec<_> = self.hash.keys().map(|s| s.to_owned()).collect();
+        if self.identifiers.is_some() {
+            temp.push("identifier".to_string());
+        }
+
+        if self.operators.is_some() {
+            temp.push("operator".to_string());
+        }
+
+        if self.integer.is_some() {
+            temp.push("integer".to_string());
+        }
+
+        if self.floating_point.is_some() {
+            temp.push("floating_point".to_string());
+        }
+
+        temp
+    }
+
+    fn contains(&self, name: &str) -> bool {
+        self.hash.contains_key(name) || match name {
+            "identifier" => self.identifiers.is_some(),
+            "operator" => self.operators.is_some(),
+            "integer" => self.integer.is_some(),
+            "floating_point" => self.floating_point.is_some(),
+            _ => false,
+        }
+    }
+
+    fn insert(&mut self, name: String, value: EbnfParserEnvVariable) {
+        match name.as_str() {
+            "identifier" => self.identifiers = Some(value),
+            "operator" => self.operators = Some(value),
+            "integer" => self.integer = Some(value),
+            "floating_point" => self.floating_point = Some(value),
+            _ => {
+                self.hash.insert(name, value);
+            }
+        }
+    }
+
+    fn remove(&mut self, name: &str) -> Option<EbnfParserEnvVariable> {
+        match name {
+            "identifier" => self.identifiers.take(),
+            "operator" => self.operators.take(),
+            "integer" => self.integer.take(),
+            "floating_point" => self.floating_point.take(),
+            _ => self.hash.remove(name),
+        }
+    }
+
+    fn get(&self, name: &str) -> Option<&EbnfParserEnvVariable> {
+        match name {
+            "identifier" => self.identifiers.as_ref(),
+            "operator" => self.operators.as_ref(),
+            "integer" => self.integer.as_ref(),
+            "floating_point" => self.floating_point.as_ref(),
+            _ => self.hash.get(name),
+        }
+    }
+
+    fn get_from_unique_string(&self, name: &UniqueString) -> Option<&EbnfParserEnvVariable> {
+        self.get(name.as_str())
+    }
+
+    fn insert_unique_string(&mut self, name: UniqueString, value: EbnfParserEnvVariable) {
+        self.insert(name.as_str().to_string(), value);
+    }
+
+    fn contains_key(&self, name: &UniqueString) -> bool {
+        self.contains(name.as_str())
+    }
+}
+
 
 pub(crate) struct EbnfParserMatcher {
     env: EbnfParserMatcherEnv,
@@ -1461,7 +1555,7 @@ pub(crate) struct EbnfParserMatcher {
 impl EbnfParserMatcher {
     pub(crate) fn new() -> Self {
         Self {
-            env: HashMap::new(),
+            env: EbnfParserMatcherEnv::new(),
             def: EbnfParserMatcherDef::new(),
             identifier_sym: UniqueString::new("identifier"),
             operator_sym: UniqueString::new("operator"),
@@ -1535,7 +1629,7 @@ impl EbnfParserMatcher {
         if let Some(expr) = expr {
             expr.init_env(&mut self.env, &mut self.def, diagnostic);
         }
-        let keys = self.env.keys().map(|s| s.clone()).collect::<Vec<_>>();
+        let keys = self.env.keys();
         for key in keys {
             if let Some(e) = self.env.remove(&key) {
                 let expr = e.recalculate_max_byte_len(&mut self.env);
