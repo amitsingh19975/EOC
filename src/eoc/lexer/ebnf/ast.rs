@@ -20,7 +20,7 @@ use crate::eoc::{
     utils::{
         diagnostic::{Diagnostic, DiagnosticLevel, DiagnosticReporter},
         source_manager::{SourceManager, SourceManagerDiagnosticInfo},
-        span::Span,
+        span::Span, string::UniqueString,
     },
 };
 
@@ -569,7 +569,7 @@ impl FlattenEbnfExpr {
         Self::from_expr(expr)
     }
 
-    fn get_max_byte_len(&self, env: Option<&HashMap<String, EbnfParserEnvVariable>>) -> u8 {
+    fn get_max_byte_len(&self, env: Option<&EbnfParserMatcherEnv>) -> u8 {
         match self {
             FlattenEbnfExpr::Identifier(id, ..) => {
                 if let Some(env) = env {
@@ -593,7 +593,7 @@ impl FlattenEbnfExpr {
         }
     }
 
-    fn recalculate_max_byte_len(self, env: &mut HashMap<String, EbnfParserEnvVariable>) -> Self {
+    fn recalculate_max_byte_len(self, env: &mut EbnfParserMatcherEnv) -> Self {
         match self {
             FlattenEbnfExpr::Identifier(id, span) => {
                 if let Some(el) = env.remove(&id) {
@@ -799,7 +799,7 @@ impl FlattenEbnfExpr {
         &self,
         matcher: &EbnfParserMatcher,
         s: &'a [u8],
-        env: &HashMap<String, EbnfParserEnvVariable>,
+        env: &EbnfParserMatcherEnv,
         source_manager: RelativeSourceManager<'a>,
         diagnostic: &mut Diagnostic,
     ) -> Option<&'a [u8]> {
@@ -1077,7 +1077,7 @@ impl Display for FlattenEbnfExpr {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum NativeCallKind {
     StartIdentifier,
     ContIdentifier,
@@ -1316,7 +1316,7 @@ impl EbnfParserEnvVariable {
         &self,
         matcher: &EbnfParserMatcher,
         s: &'a [u8],
-        env: &HashMap<String, EbnfParserEnvVariable>,
+        env: &EbnfParserMatcherEnv,
         source_manager: RelativeSourceManager<'a>,
         diagnostic: &mut Diagnostic,
     ) -> Option<&'a [u8]> {
@@ -1326,14 +1326,14 @@ impl EbnfParserEnvVariable {
         }
     }
 
-    fn get_max_byte_len(&self, env: Option<&HashMap<String, EbnfParserEnvVariable>>) -> u8 {
+    fn get_max_byte_len(&self, env: Option<&EbnfParserMatcherEnv>) -> u8 {
         match self {
             Self::Expr(expr) => expr.get_max_byte_len(env),
             Self::NativeCall(_) => 1,
         }
     }
 
-    fn recalculate_max_byte_len(self, env: &mut HashMap<String, EbnfParserEnvVariable>) -> Self {
+    fn recalculate_max_byte_len(self, env: &mut EbnfParserMatcherEnv) -> Self {
         match self {
             Self::Expr(expr) => Self::Expr(expr.recalculate_max_byte_len(env)),
             _ => self,
@@ -1344,7 +1344,7 @@ impl EbnfParserEnvVariable {
 impl FlattenEbnfExpr {
     fn init_env<'a>(
         self,
-        env: &mut HashMap<String, EbnfParserEnvVariable>,
+        env: &mut EbnfParserMatcherEnv,
         def: &mut EbnfParserMatcherDef,
         diagnostic: &mut Diagnostic,
     ) {
@@ -1373,7 +1373,7 @@ impl FlattenEbnfExpr {
         }
     }
 
-    fn get_unique_name(name: &str, env: &HashMap<String, EbnfParserEnvVariable>) -> String {
+    fn get_unique_name(name: &str, env: &EbnfParserMatcherEnv) -> String {
         let mut i = 0;
         let mut new_name = name.to_owned();
         while env.contains_key(&new_name) || (new_name == name) {
@@ -1412,7 +1412,7 @@ impl FlattenEbnfExpr {
     }
 }
 
-struct EbnfParserMatcherDef(HashSet<String>, Vec<String>);
+struct EbnfParserMatcherDef(HashSet<&'static str>, Vec<UniqueString>);
 
 impl EbnfParserMatcherDef {
     fn new() -> Self {
@@ -1423,22 +1423,25 @@ impl EbnfParserMatcherDef {
         self.0.contains(name)
     }
 
-    fn ordered_iter(&self) -> Iter<'_, String> {
+    fn ordered_iter(&self) -> Iter<'_, UniqueString> {
         self.1.iter()
     }
 
     fn insert(&mut self, name: String) {
-        self.0.insert(name.clone());
-        self.1.push(name);
+        let s = UniqueString::new(name);
+        self.0.insert(s.as_str());
+        self.1.push(s);
     }
 
-    fn keys(&self) -> std::collections::hash_set::Iter<'_, String> {
+    fn keys(&self) -> std::collections::hash_set::Iter<'_, &'static str> {
         self.0.iter()
     }
 }
 
+type EbnfParserMatcherEnv = HashMap<String, EbnfParserEnvVariable>;
+
 pub(crate) struct EbnfParserMatcher {
-    env: HashMap<String, EbnfParserEnvVariable>,
+    env: EbnfParserMatcherEnv,
     def: EbnfParserMatcherDef
 }
 
@@ -1919,67 +1922,68 @@ impl EbnfParserMatcher {
 
     fn match_expr_helper<'b>(
         &self,
-        key: &str,
+        symbol: UniqueString,
         expr: &EbnfParserEnvVariable,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &mut Diagnostic,
-    ) -> Option<(&'b [u8], String)> {
+    ) -> Option<(&'b [u8], TokenKind)> {
+        let key = symbol.as_str();
         match key {
             "identifier" => {
                 let temp = if !self.contains_def(key) {
-                    self.match_native_identifier(s, source_manager, diagnostic).map(|s| (s, key.to_owned()))
+                    self.match_native_identifier(s, source_manager, diagnostic).map(|s| (s, TokenKind::Identifier))
                 } else {
                     expr.match_expr(self, s, &self.env, source_manager, diagnostic)
-                        .map(|s| (s, key.to_owned()))
+                        .map(|s| (s, TokenKind::Identifier))
                 };
                 temp
             }
             "operator" => {
                 let temp = if !self.contains_def(key) {
-                    self.match_native_operator(s, source_manager, diagnostic).map(|s| (s, key.to_owned()))
+                    self.match_native_operator(s, source_manager, diagnostic).map(|s| (s, TokenKind::Operator))
                 } else {
                     expr.match_expr(self, s, &self.env, source_manager, diagnostic)
-                        .map(|s| (s, key.to_owned()))
+                        .map(|s| (s, TokenKind::Operator))
                 };
                 temp
             }
             "floating_point" => {
                 let temp = if !self.contains_def(key) {
                     self.match_native_floating_point(s, source_manager, diagnostic)
-                        .map(|s| (s, key.to_owned()))
+                        .map(|s| (s, TokenKind::FloatingPoint))
                 } else {
                     expr.match_expr(self, s, &self.env, source_manager, diagnostic)
-                        .map(|s| (s, key.to_owned()))
+                        .map(|s| (s, TokenKind::FloatingPoint))
                 };
                 temp
             }
             "integer" => {
                 let temp = if !self.contains_def(key) {
                     self.match_native_integer(s, source_manager, diagnostic)
-                        .map(|s| (s, key.to_owned()))
+                        .map(|s| (s, TokenKind::Integer))
                 } else {
                     expr.match_expr(self, s, &self.env, source_manager, diagnostic)
-                        .map(|s| (s, key.to_owned()))
+                        .map(|s| (s, TokenKind::Integer))
                 };
                 temp
             }
             _ => expr
                 .match_expr(self, s, &self.env, source_manager, diagnostic)
-                .map(|s| (s, key.to_owned())),
+                .map(|s| (s, TokenKind::CustomToken(symbol))),
         }
     }
 
-    pub(crate) fn match_expr<'b>(
+    pub(crate) fn try_match_expr<'b>(
         &mut self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &mut Diagnostic,
-    ) -> Option<(&'b [u8], String)> {
+    ) -> Option<(&'b [u8], TokenKind)> {
         for d in self.def.ordered_iter() {
-            if let Some(expr) = self.env.get(d) {
+            if let Some(expr) = self.env.get(d.as_str()) {
                 let temp = self.match_expr_helper(
-                    d,
+                    *d,
                     expr,
                     s,
                     source_manager,

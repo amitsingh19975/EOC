@@ -1,7 +1,10 @@
 use crate::eoc::lexer::ebnf::ast::EbnfParser;
 
 use self::{
-    ebnf::{ast::{EbnfParserMatcher, RelativeSourceManager}, lexer::EbnfLexer},
+    ebnf::{
+        ast::{EbnfParserMatcher, RelativeSourceManager},
+        lexer::EbnfLexer,
+    },
     token::{Token, TokenKind},
     utils::{
         is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point,
@@ -18,7 +21,11 @@ use super::{
         trie::Trie,
     },
 };
-use std::{path::Path, sync::{Arc, Mutex}, vec};
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+    vec,
+};
 pub(crate) mod ebnf;
 pub(crate) mod str_utils;
 pub(crate) mod token;
@@ -35,7 +42,7 @@ pub(crate) struct Lexer {
     custom_keywords_trie: Trie<u8, usize>,
     rewind_stack: Vec<usize>,
     global_lexer_matcher: Option<Arc<Mutex<EbnfParserMatcher>>>,
-    local_lexer_matcher: EbnfParserMatcher
+    local_lexer_matcher: EbnfParserMatcher,
 }
 
 impl Lexer {
@@ -190,7 +197,7 @@ impl Lexer {
             self.cursor = end;
 
             let kind: TokenKind = slice.into();
-            
+
             if should_parse_nested_operator {
                 if kind == TokenKind::KwOperator {
                     let new_tokens = self.lex_custom_operator(span);
@@ -201,7 +208,6 @@ impl Lexer {
                 }
             }
         }
-
     }
 
     fn lex_operator(&mut self, tokens: &mut Vec<Token>) {
@@ -248,7 +254,6 @@ impl Lexer {
             RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
             &mut self.diagnostics,
         );
-
 
         if let Some(bytes) = temp {
             let end = self.cursor + bytes.len();
@@ -675,7 +680,8 @@ impl Lexer {
         );
         let tokens = enbf_lexer.lex();
         let program = EbnfParser::parse(tokens, &self.source_manager, &mut self.diagnostics);
-        self.local_lexer_matcher.init(Some(program), &mut self.diagnostics);
+        self.local_lexer_matcher
+            .init(Some(program), &mut self.diagnostics);
     }
 
     fn lex_back_tick(&mut self, tokens: &mut Vec<Token>) {
@@ -851,30 +857,36 @@ impl Lexer {
 
     fn is_start_of_identifier(&mut self) -> bool {
         // println!("str: {:?}", std::str::from_utf8(&self.source_manager.get_source()[self.cursor..]);
-        self.local_lexer_matcher.match_native(
-            ebnf::ast::NativeCallKind::StartIdentifier,
-            &self.source_manager.get_source()[self.cursor..],
-            RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
-            &mut self.diagnostics,
-        ).is_some()
+        self.local_lexer_matcher
+            .match_native(
+                ebnf::ast::NativeCallKind::StartIdentifier,
+                &self.source_manager.get_source()[self.cursor..],
+                RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+                &mut self.diagnostics,
+            )
+            .is_some()
     }
 
     fn is_valid_digit(&mut self) -> bool {
-        self.local_lexer_matcher.match_native(
-            ebnf::ast::NativeCallKind::Digit,
-            &self.source_manager.get_source()[self.cursor..],
-            RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
-            &mut self.diagnostics,
-        ).is_some()
+        self.local_lexer_matcher
+            .match_native(
+                ebnf::ast::NativeCallKind::Digit,
+                &self.source_manager.get_source()[self.cursor..],
+                RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+                &mut self.diagnostics,
+            )
+            .is_some()
     }
 
     fn is_valid_operator_start(&mut self) -> bool {
-        self.local_lexer_matcher.match_native(
-            ebnf::ast::NativeCallKind::StartOperator,
-            &self.source_manager.get_source()[self.cursor..],
-            RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
-            &mut self.diagnostics,
-        ).is_some()
+        self.local_lexer_matcher
+            .match_native(
+                ebnf::ast::NativeCallKind::StartOperator,
+                &self.source_manager.get_source()[self.cursor..],
+                RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+                &mut self.diagnostics,
+            )
+            .is_some()
     }
 
     fn lex_helper(&mut self, until: Vec<char>, should_check_paren: bool) -> Vec<Token> {
@@ -891,8 +903,10 @@ impl Lexer {
                             .report(
                                 DiagnosticLevel::Error,
                                 "Infinite loop detected",
-                                self.source_manager
-                                    .get_source_info(Span::from_usize(self.cursor, self.cursor + 1)),
+                                self.source_manager.get_source_info(Span::from_usize(
+                                    self.cursor,
+                                    self.cursor + 1,
+                                )),
                                 None,
                             )
                             .add_error(
@@ -927,15 +941,20 @@ impl Lexer {
                 continue;
             }
 
-            // if !self.paren_balance.is_empty() {
-            //     let temp = &self.source_manager.get_source()[self.cursor..(self.cursor + 10).min(self.source_manager.len())];
-            //     let temp = std::str::from_utf8(temp).unwrap();
-            //     println!("str: {temp}");
-            //     println!("paren_balance: {:#?}", self.paren_balance.last());
-            // }
-
             if until.contains(&ch) {
                 break;
+            }
+
+            if let Some((matched, kind)) = self.local_lexer_matcher.try_match_expr(
+                &self.source_manager.get_source()[self.cursor..],
+                RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+                &mut self.diagnostics,
+            ) {
+                let end = self.cursor + matched.len();
+                let span = Span::from_usize(self.cursor, end);
+                tokens.push(Token::new(kind, span));
+                self.cursor = end;
+                continue;
             }
 
             let mut should_run_custom_match = true;
