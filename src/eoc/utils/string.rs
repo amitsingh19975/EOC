@@ -17,7 +17,7 @@ impl Display for UniqueString {
 }
 
 impl UniqueString {
-    pub(crate) fn new(s: String) -> Self {
+    pub(crate) fn new<S: AsRef<str>>(s: S) -> Self {
         let index = Self::find_index(s.as_ref());
         if index >= 0 {
             let reader = STRING_INTERNER.write().unwrap();
@@ -26,7 +26,7 @@ impl UniqueString {
 
         let mut writer = STRING_INTERNER.write().unwrap();
         let id = writer.len();
-        let s = Box::leak(s.into_boxed_str());
+        let s = Box::leak(s.as_ref().to_owned().into_boxed_str());
         writer.push(s);
         Self(id as u32, s)
     }
