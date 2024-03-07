@@ -12,7 +12,7 @@ use crate::eoc::{
         str_utils::ByteToCharIter,
         token::{Token, TokenKind},
         utils::{
-            byte_to_char, decode_unicode_escape_sequence,
+            decode_unicode_escape_sequence,
             is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point,
             ParenMatching,
         },
