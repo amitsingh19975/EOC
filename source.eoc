@@ -2,6 +2,8 @@
 
 digit = digit | '\u{0966}'..='\u{096F}';
 
-```
+tensor_dims ::= { integer | 'x' };
+tensor ::= "Tensor", { whitespace }?, "<", whitespace?, tensor_dims, whitespace?, ">";
 
-let a = 1.२331E+10
+```
+let a = Tensor  <12x32x13>
