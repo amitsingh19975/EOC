@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::eoc::{lexer::utils::escape_string, utils::{source_manager::SourceManager, span::Span}};
+use crate::eoc::{lexer::utils::escape_string, utils::{source_manager::SourceManager, span::Span, string::UniqueString}};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TokenKind {
@@ -102,7 +102,7 @@ pub(crate) enum TokenKind {
 
     // ========= End Ebnf ==========
 
-
+    CustomToken(UniqueString),
     Unknown,
 }
 
@@ -469,7 +469,11 @@ impl Token {
     }
 
     pub(crate) fn to_string(&self, source_manager: &SourceManager) -> String {
-        format!("Token({:?}, '{}', {:?}, len={})", self.kind, escape_string(self.as_str(source_manager)), self.span, self.len())
+        if let TokenKind::CustomToken(s) = self.kind {
+            format!("Token(CustomToken('{}'), '{}', {:?}, len={})", s, escape_string(self.as_str(source_manager)), self.span, self.len())
+        } else {
+            format!("Token({:?}, '{}', {:?}, len={})", self.kind, escape_string(self.as_str(source_manager)), self.span, self.len())
+        }
     }
 }
 
