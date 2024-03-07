@@ -8,12 +8,11 @@ lazy_static! {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-pub(crate) struct UniqueString(u32);
+pub(crate) struct UniqueString(u32, &'static str);
 
 impl Display for UniqueString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = self.as_str();
-        write!(f, "{s}")
+        write!(f, "{}", self.as_str())
     }
 }
 
@@ -21,13 +20,15 @@ impl UniqueString {
     pub(crate) fn new(s: String) -> Self {
         let index = Self::find_index(s.as_ref());
         if index >= 0 {
-            return Self(index as u32)
+            let reader = STRING_INTERNER.write().unwrap();
+            return Self(index as u32, reader[index as usize])
         }
 
         let mut writer = STRING_INTERNER.write().unwrap();
         let id = writer.len();
-        writer.push(Box::leak(s.into_boxed_str()));
-        Self(id as u32)
+        let s = Box::leak(s.into_boxed_str());
+        writer.push(s);
+        Self(id as u32, s)
     }
 
     fn find_index(s: &str) -> isize {
@@ -42,7 +43,6 @@ impl UniqueString {
     }
 
     pub(crate) fn as_str(&self) -> &'static str {
-        let reader = STRING_INTERNER.read().unwrap();
-        reader[self.0 as usize]
+        self.1
     }
 }
