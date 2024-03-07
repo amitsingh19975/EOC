@@ -206,29 +206,32 @@ macro_rules! print_message_fn {
             let suggestions = DiagnosticBase::resolve_underline(base.messages.iter().filter(|m| m.span.is_some()).collect::<Vec<_>>());
     
             if !suggestions.is_empty() {
-                write!(f, "{:width$}{}", ' ', "|".magenta_ext(is_redirecting), width=line_number_width)?;
+                write!(f, "{:width$}{} ", ' ', "|".magenta_ext(is_redirecting), width=line_number_width)?;
             }
     
             {
                 let mut last_span = 0;
                 for (message, span) in suggestions.iter() {
-                    let diff = ((span.start - last_span) as isize - 1).max(0) as usize; 
-                    // println!("diff: {} | {:#?}", diff, span);
-                    write!(f, " {}", " ".repeat(diff))?;
+                    let diff = ((span.start - last_span) as isize - 1).max(0) as usize;
+                    write!(f, "{}", " ".repeat(diff))?;
                     write!(f, "{}", "^".repeat(span.len()).colorize(message.level, is_redirecting))?;
                     last_span = span.end;
                 }
             }
     
             for (depth, (message, span)) in suggestions.iter().rev().enumerate() {
-                let len = span.len();
+                let mut last_span = 0;
                 for _ in 0..depth {
-                    write!(f, "{:width$}{}{}{}", ' ', "|".magenta_ext(is_redirecting), " ".repeat(len), "|".colorize(message.level, is_redirecting), width=line_number_width)?;
+                    let diff = ((span.start - last_span) as isize).max(0) as usize;
+                    write!(f, "{:width$}{}{}{}", ' ', "|".magenta_ext(is_redirecting), " ".repeat(diff), "|".colorize(message.level, is_redirecting), width=line_number_width)?;
+                    last_span = span.end;
                 }
+                
                 if depth == 0 {
                     writeln!(f, " {}", message.message.colorize(message.level, is_redirecting))?;
                 } else {
-                    writeln!(f, "\n{:width$}{}{}{}", ' ', "|".magenta_ext(is_redirecting), " ".repeat(len), message.message.colorize(message.level, is_redirecting), width=line_number_width)?;
+                    let diff = (span.start as isize - 1).max(0) as usize;
+                    writeln!(f, "\n{:width$}{}{}{}", ' ', "|".magenta_ext(is_redirecting), " ".repeat(diff), message.message.colorize(message.level, is_redirecting), width=line_number_width)?;
                 }
             }
     
@@ -312,14 +315,14 @@ pub(crate) struct DiagnosticBuilder<'a> {
 impl<'a> DiagnosticBuilder<'a> {
     pub(crate) fn report<S: AsRef<str>>(&mut self, level: DiagnosticLevel, message: S, source_info: SourceManagerDiagnosticInfo, span: Option<Span>) -> &mut Self {
         self.inner = Some(DiagnosticBase::new(DiagnosticMessage::new(level, message.as_ref().to_owned(), span), source_info));
-        return self;
+        self
     }
 
     pub(crate) fn add_note<S: AsRef<str>>(&mut self, message: S, span: Option<Span>) -> &mut Self {
         if let Some(ref mut inner) = self.inner {
             inner.add_note(DiagnosticMessage::new(DiagnosticLevel::Note, message.as_ref().to_owned(), span));
         }
-        return self;
+        self
     }
 
     pub(crate) fn add_error<S: AsRef<str>>(&mut self, message: S, span: Option<Span>) -> &mut Self {
@@ -328,7 +331,7 @@ impl<'a> DiagnosticBuilder<'a> {
         } else {
             self.inner = Some(DiagnosticBase::new(DiagnosticMessage::new(DiagnosticLevel::Error, message.as_ref().to_owned(), span), SourceManagerDiagnosticInfo::default()));
         }
-        return self;
+        self
     }
 
     pub(crate) fn add_warning<S: AsRef<str>>(&mut self, message: S, span: Option<Span>) -> &mut Self {
@@ -337,7 +340,7 @@ impl<'a> DiagnosticBuilder<'a> {
         } else {
             self.inner = Some(DiagnosticBase::new(DiagnosticMessage::new(DiagnosticLevel::Warning, message.as_ref().to_owned(), span), SourceManagerDiagnosticInfo::default()));
         }
-        return self;
+        self
     }
 
     pub(crate) fn add_info<S: AsRef<str>>(&mut self, message: S, span: Option<Span>) -> &mut Self {
@@ -346,7 +349,7 @@ impl<'a> DiagnosticBuilder<'a> {
         } else {
             self.inner = Some(DiagnosticBase::new(DiagnosticMessage::new(DiagnosticLevel::Info, message.as_ref().to_owned(), span), SourceManagerDiagnosticInfo::default()));
         }
-        return self;
+        self
     }
 
     pub(crate) fn commit(&mut self) {
