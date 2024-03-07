@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::eoc::lexer::ebnf::ast::EbnfParser;
 
 use self::{
