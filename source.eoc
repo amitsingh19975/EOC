@@ -2,7 +2,7 @@
 
 digit = digit | '\u{0966}'..='\u{096F}';
 
-tensor_dims ::= { integer | 'x' };
+tensor_dims = { integer | 'x' };
 tensor ::= "Tensor", { whitespace }?, "<", whitespace?, tensor_dims, whitespace?, ">";
 
 ```
