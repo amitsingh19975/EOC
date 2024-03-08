@@ -9,10 +9,9 @@ use std::{
 use crate::eoc::{
     ast::identifier::Identifier,
     lexer::{
-        str_utils::ByteToCharIter,
+        str_utils::{ ByteToCharIter, decode_unicode_escape_sequence },
         token::{Token, TokenKind},
         utils::{
-            decode_unicode_escape_sequence,
             is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point,
             ParenMatching,
         },

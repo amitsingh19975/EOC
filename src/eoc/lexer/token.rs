@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::eoc::{lexer::utils::escape_string, utils::{source_manager::SourceManager, span::Span, string::UniqueString}};
+use crate::eoc::{lexer::str_utils::escape_string, utils::{source_manager::SourceManager, span::Span, string::UniqueString}};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TokenKind {

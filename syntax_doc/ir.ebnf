@@ -1,0 +1,72 @@
+(* Use MLIR Syntax *)
+
+digit     = [0-9];
+hex_digit = [0-9a-fA-F];
+letter    = [a-zA-Z];
+id_punct  = [$._-];
+
+integer_literal = decimal_literal | hexadecimal_literal;
+decimal_literal = digit+;
+hexadecimal_literal = `0x` hex_digit+;
+float_literal = [-+]?[0-9]+[.][0-9]*([eE][-+]?[0-9]+)?;
+escaped_char = `\\` [abfnrtv"'\?\\];
+string_char = any_unicode_character - `"` - `\\` | escaped_char;
+character_literal = `'` string_char `'`;
+string_literal  = `"` string_char* `"`;
+
+toplevel = (operation | attribute-alias-def | type-alias-def)*;
+
+bare_id = (letter|[_]) (letter|digit|[_$.])*;
+bare_id_list = bare_id (`,` bare_id)*;
+value_id = `%` suffix_id;
+alias_name = bare_id;
+suffix_id = (digit+ | ((letter|id_punct) (letter|id_punct|digit)*));
+
+symbol_ref_id = `@` (suffix_id | string_literal) (`::` symbol_ref_id)?;
+value_id_list = value_id (`,` value_id)*;
+
+(* Uses of value, e.g. in an operand list to an operation *)
+value_use = value_id (`#` decimal_literal)?;
+value_use_list = value_use (`,` value_use)*;
+
+operation             = op_result_list? (generic_operation | custom_operation) trailing_location?;
+generic_operation     = string_literal `(` value_use_list? `)`  successor_list? dictionary_properties? region_list? dictionary_attribute? `:` function_type;
+custom_operation      = bare_id custom_operation_format;
+op_result_list        = op_result (`,` op_result)* `=`;
+op_result             = value_id (`:` integer_literal)?;
+successor_list        = `[` successor (`,` successor)* `]`;
+successor             = caret_id (`:` block_arg_list)?;
+dictionary_properties = `<` dictionary_attribute `>`;
+region_list           = `(` region (`,` region)* `)`;
+dictionary_attribute  = `{` (attribute_entry (`,` attribute_entry)*)? `}`;
+trailing_location     = `loc` `(` location `)`;
+
+block           = block_label operation+;
+block_label     = block_id block_arg_list? `:`;
+block_id        = caret_id;
+caret_id        = `^` suffix_id;
+value_id_and_type = value_id `:` type;
+
+(* Non_empty list of names and types. *)
+value_id_and_type_list = value_id_and_type (`,` value_id_and_type)*;
+
+block_arg_list = `(` value_id_and_type_list? `)`;
+
+region      = `{` entry_block? block* `}`;
+entry_block = operation+;
+
+
+(* Types *)
+type - type-alias | dialect-type | builtin-type;
+
+type-list-no-parens -  type (`,` type)*;
+type-list-parens - `(` `)` | `(` type-list-no-parens `)`;
+
+(* This is a common way to refer to a value with a specified type. *)
+ssa-use-and-type - ssa-use `:` type;
+ssa-use - value-use;
+
+(* Non-empty list of names and types. *)
+ssa-use-and-type-list - ssa-use-and-type (`,` ssa-use-and-type)*;
+
+function-type - (type | type-list-parens) `->` (type | type-list-parens);

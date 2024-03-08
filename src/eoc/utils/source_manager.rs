@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use std::{ops::{Index, RangeFrom}, path::{Path, PathBuf}};
-use crate::eoc::lexer::utils::byte_to_char;
+use crate::eoc::lexer::str_utils::byte_to_char;
 
 use super::{filesystem::MappedFile, span::Span};
 
