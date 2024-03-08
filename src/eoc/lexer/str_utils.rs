@@ -1,6 +1,6 @@
 const UTF_8_LOOKUP: [u8; 16] = [ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 4 ];
 
-fn get_utf8_char_len(b: u8) -> usize {
+pub(crate) fn get_utf8_char_len(b: u8) -> usize {
     UTF_8_LOOKUP[(b >> 4) as usize] as usize
 }
 
@@ -9,7 +9,7 @@ pub(crate) fn valid_utf8_character_with_char_len(source: &[u8]) -> (Option<char>
         return (None, 0);
     }
     let first = source[0];
-    let len = get_utf8_char_len(first);
+    let len = get_utf8_char_len(first).min(source.len());
     std::str::from_utf8(&source[0..len]).ok().map(|s| (Some(s.chars().next().unwrap()), len)).unwrap_or((None, 0))
 }
 
