@@ -10,7 +10,10 @@ pub(crate) fn valid_utf8_character_with_char_len(source: &[u8]) -> (Option<char>
     }
     let first = source[0];
     let len = get_utf8_char_len(first).min(source.len());
-    std::str::from_utf8(&source[0..len]).ok().map(|s| (Some(s.chars().next().unwrap()), len)).unwrap_or((None, 0))
+    unsafe {
+        let s = std::str::from_utf8_unchecked(&source[0..len]);
+        s.chars().next().map(|c| (Some(c), len)).unwrap_or((None, 0))
+    }
 }
 
 pub(crate) fn escape_string(source: &str) -> String {
