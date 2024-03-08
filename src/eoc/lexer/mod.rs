@@ -960,6 +960,7 @@ impl Lexer {
                 continue;
             }
 
+
             let mut should_run_custom_match = true;
 
             if ch == '.' {
@@ -1002,11 +1003,11 @@ impl Lexer {
                 c if self.is_valid_comment(c) => {
                     self.lex_comment(&mut tokens);
                 }
-                _ if self.is_start_of_identifier() => {
-                    self.lex_identifier(&mut tokens, true);
-                }
                 _ if self.is_valid_digit() || !should_run_custom_match => {
                     self.lex_number(&mut tokens);
+                }
+                _ if self.is_start_of_identifier() => {
+                    self.lex_identifier(&mut tokens, true);
                 }
                 '$' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
