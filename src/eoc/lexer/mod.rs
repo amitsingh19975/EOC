@@ -4,7 +4,8 @@ use crate::eoc::lexer::ebnf::ast::EbnfParser;
 
 use self::{
     ebnf::{
-        ast::{EbnfParserMatcher, RelativeSourceManager},
+        ast::{RelativeSourceManager},
+        matcher::EbnfParserMatcher,
         lexer::EbnfLexer,
     },
     token::{Token, TokenKind},
@@ -27,6 +28,7 @@ pub(crate) mod ebnf;
 pub(crate) mod str_utils;
 pub(crate) mod token;
 pub(crate) mod utils;
+pub(crate) mod number;
 
 pub(crate) struct Lexer {
     source_manager: SourceManager,

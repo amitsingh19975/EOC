@@ -10,7 +10,8 @@ use crate::eoc::{
 };
 
 use super::{
-    ast::{EbnfParserMatcher, EbnfParserMatcherDef, EbnfParserMatcherEnv, RelativeSourceManager},
+    ast::{EbnfParserMatcherDef, EbnfParserMatcherEnv, RelativeSourceManager},
+    matcher::CustomEbnfParserMatcher,
     native_call::NativeCallKind,
 };
 
@@ -151,7 +152,7 @@ impl EbnfParserEnvVariable {
 
     pub(super) fn match_expr<'a>(
         &self,
-        matcher: &EbnfParserMatcher,
+        matcher: &CustomEbnfParserMatcher,
         s: &'a [u8],
         env: &EbnfParserMatcherEnv,
         source_manager: RelativeSourceManager<'a>,
@@ -459,7 +460,7 @@ impl EbnfExpr {
 
     pub(super) fn match_expr<'a>(
         &self,
-        matcher: &EbnfParserMatcher,
+        matcher: &CustomEbnfParserMatcher,
         s: &'a [u8],
         env: &EbnfParserMatcherEnv,
         source_manager: RelativeSourceManager<'a>,

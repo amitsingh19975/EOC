@@ -1,9 +1,17 @@
-use std::fmt::{ Display, Debug };
+use std::fmt::{Debug, Display};
 
-use crate::eoc::{ast::identifier::Identifier, lexer::{str_utils::ByteToCharIter, utils::{is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point}}, utils::diagnostic::Diagnostic};
+use crate::eoc::{
+    ast::identifier::Identifier,
+    lexer::{
+        str_utils::ByteToCharIter,
+        utils::{
+            is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point,
+        },
+    },
+    utils::diagnostic::Diagnostic,
+};
 
-use super::ast::{EbnfParserMatcher, RelativeSourceManager};
-
+use super::{ast::RelativeSourceManager, matcher::CustomEbnfParserMatcher};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum NativeCallKind {
@@ -47,7 +55,7 @@ impl NativeCallKind {
 
     pub(super) fn call<'b>(
         &self,
-        matcher: &EbnfParserMatcher,
+        matcher: &CustomEbnfParserMatcher,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &mut Diagnostic,
@@ -152,7 +160,9 @@ impl NativeCallKind {
                 }
             }
             Self::Integer => matcher.match_native_integer(s, source_manager, diagnostic),
-            Self::FloatingPoint => matcher.match_native_floating_point(s, source_manager, diagnostic)
+            Self::FloatingPoint => {
+                matcher.match_native_floating_point(s, source_manager, diagnostic)
+            }
         }
     }
 
