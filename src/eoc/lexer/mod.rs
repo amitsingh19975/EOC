@@ -17,16 +17,11 @@ use self::{
 use super::{
     ast::identifier::Identifier,
     utils::{
-        diagnostic::{Diagnostic, DiagnosticLevel, DiagnosticReporter},
-        source_manager::SourceManager,
-        span::Span,
-        trie::Trie,
+        diagnostic::{Diagnostic, DiagnosticLevel, DiagnosticReporter}, source_manager::SourceManager, span::Span, string::UniqueString, trie::Trie
     },
 };
 use std::{
-    path::Path,
-    sync::{Arc, Mutex},
-    vec,
+    collections::HashMap, path::Path, vec
 };
 pub(crate) mod ebnf;
 pub(crate) mod str_utils;
@@ -43,8 +38,7 @@ pub(crate) struct Lexer {
     custom_operators_trie: Trie<u8, usize>,
     custom_keywords_trie: Trie<u8, usize>,
     rewind_stack: Vec<usize>,
-    global_lexer_matcher: Option<Arc<Mutex<EbnfParserMatcher>>>,
-    local_lexer_matcher: EbnfParserMatcher,
+    block_lexer_matcher: HashMap<UniqueString, EbnfParserMatcher>,
 }
 
 impl Lexer {
@@ -59,14 +53,15 @@ impl Lexer {
             rewind_stack: Vec::new(),
             custom_operators_trie: Trie::new(),
             custom_keywords_trie: Trie::new(),
-            global_lexer_matcher: None,
-            local_lexer_matcher: EbnfParserMatcher::new(),
+            block_lexer_matcher: HashMap::new(),
         }
     }
 
-    pub(crate) fn set_global_lexer_matcher(&mut self, matcher: Arc<Mutex<EbnfParserMatcher>>) {
-        self.global_lexer_matcher = Some(matcher);
-    }
+    // pub(crate) fn set_global_lexer_matcher(&mut self, matcher: Arc<RwLock<EbnfParserMatcher>>) {
+    //     matcher.read()
+    //     self.local_lexer_matcher.merge(matcher);
+    //     // self.global_lexer_matcher = Some(matcher);
+    // }
 
     pub(crate) fn new_from_filepath<P: AsRef<Path>, D: Into<Diagnostic>>(
         path: P,
@@ -187,8 +182,8 @@ impl Lexer {
         &self.custom_keywords
     }
 
-    fn lex_identifier(&mut self, tokens: &mut Vec<Token>, should_parse_nested_operator: bool) {
-        if let Some(slice) = self.local_lexer_matcher.match_identifier(
+    fn lex_identifier(&mut self, matcher: &EbnfParserMatcher, tokens: &mut Vec<Token>, should_parse_nested_operator: bool) {
+        if let Some(slice) = matcher.match_identifier(
             &self.source_manager.get_source()[self.cursor..],
             RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
             &mut self.diagnostics,
@@ -212,8 +207,8 @@ impl Lexer {
         }
     }
 
-    fn lex_operator(&mut self, tokens: &mut Vec<Token>) {
-        if let Some(slice) = self.local_lexer_matcher.match_operator(
+    fn lex_operator(&mut self, matcher: &EbnfParserMatcher, tokens: &mut Vec<Token>) {
+        if let Some(slice) = matcher.match_operator(
             &self.source_manager.get_source()[self.cursor..],
             RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
             &mut self.diagnostics,
@@ -234,8 +229,8 @@ impl Lexer {
     ///   floating_literal ::= [0-9][0-9_]*[eE][+-]?[0-9][0-9_]*
     ///   floating_literal ::= 0x[0-9A-Fa-f][0-9A-Fa-f_]*
     ///                          (\.[0-9A-Fa-f][0-9A-Fa-f_]*)?[pP][+-]?[0-9][0-9_]*
-    fn lex_number(&mut self, tokens: &mut Vec<Token>) -> bool {
-        let temp = self.local_lexer_matcher.match_native(
+    fn lex_number(&mut self, matcher: &EbnfParserMatcher, tokens: &mut Vec<Token>) -> bool {
+        let temp = matcher.match_native(
             ebnf::ast::NativeCallKind::Integer,
             &self.source_manager.get_source()[self.cursor..],
             RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
@@ -250,7 +245,7 @@ impl Lexer {
             return true;
         }
 
-        let temp = self.local_lexer_matcher.match_native(
+        let temp = matcher.match_native(
             ebnf::ast::NativeCallKind::FloatingPoint,
             &self.source_manager.get_source()[self.cursor..],
             RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
@@ -267,11 +262,11 @@ impl Lexer {
         false
     }
 
-    fn lex_formatting_string(&mut self) -> Vec<Token> {
-        self.lex_helper(vec!['}'], false)
+    fn lex_formatting_string(&mut self, matcher: &mut EbnfParserMatcher) -> Vec<Token> {
+        self.lex_helper(matcher, vec!['}'], false, false)
     }
 
-    fn lex_double_quoted_string(&mut self, tokens: &mut Vec<Token>) {
+    fn lex_double_quoted_string(&mut self, matcher: &mut EbnfParserMatcher, tokens: &mut Vec<Token>) {
         if self.peek_char() != Some('"') {
             return;
         }
@@ -329,7 +324,7 @@ impl Lexer {
                 {
                     let span = Span::from_usize(start, end);
                     format_tokens.push(Token::new(TokenKind::String, span));
-                    let temp_format_tokens = self.lex_formatting_string();
+                    let temp_format_tokens = self.lex_formatting_string(matcher);
 
                     if self.peek_char() != Some('}') {
                         let last_seen_quote = format_tokens
@@ -673,7 +668,7 @@ impl Lexer {
         next == '/' || next == '*'
     }
 
-    fn parse_ebnf_lexer_block(&mut self, span: Span) {
+    fn parse_ebnf_lexer_block(&mut self, matcher: &mut EbnfParserMatcher, name: Option<String>, span: Span) {
         let mut enbf_lexer = EbnfLexer::new(
             &self.source_manager,
             &mut self.diagnostics,
@@ -682,11 +677,136 @@ impl Lexer {
         );
         let tokens = enbf_lexer.lex();
         let program = EbnfParser::parse(tokens, &self.source_manager, &mut self.diagnostics);
-        self.local_lexer_matcher
-            .init(Some(program), &mut self.diagnostics);
+        if let Some(name) = name {
+            let mut matcher = EbnfParserMatcher::new();
+            matcher.init(Some(program), &mut self.diagnostics);
+            let name = UniqueString::new(name);
+            self.block_lexer_matcher.insert(name, matcher);
+        } else {
+            matcher.init(Some(program), &mut self.diagnostics);
+        }
     }
 
-    fn lex_back_tick(&mut self, tokens: &mut Vec<Token>) {
+    fn try_lex_using_custom_matcher(&mut self, tokens: &mut Vec<Token>) -> bool {
+        if let Some(ch) = self.peek_char() {
+            if ch.is_whitespace() {
+                return false;
+            }
+        }
+
+        self.save_cursor();
+        let mut temp_name = None;
+        
+        let code_start = self.cursor - 3;
+        let mut code_end = self.cursor;
+        for (name, _) in self.block_lexer_matcher.iter() {
+            let source = &self.source_manager.get_source()[self.cursor..];
+            if !source.starts_with(name.as_str().as_bytes()) {
+                continue;
+            }
+            
+            temp_name = Some(name.clone());
+            code_end += name.as_str().as_bytes().len();
+            self.cursor = code_end;
+            break;
+        }
+
+        if let Some(name) = temp_name {
+            let code_span = Span::from_usize(code_start, code_end);
+            let mut code_end_span = code_span;
+            let mut matcher = self.block_lexer_matcher.remove(&name).unwrap();
+            let temp_tokens = self.lex_helper(&mut matcher, vec![], true, true);
+            if !ParenMatching::is_triple_back_tick_block(
+                &self.source_manager.get_source(),
+                self.cursor,
+                b"```",
+            ) {
+                self.diagnostics
+                    .builder()
+                    .report(
+                        DiagnosticLevel::Error,
+                        "Unterminated lexer block",
+                        self.source_manager
+                            .get_source_info(code_span),
+                        None,
+                    )
+                    .add_error(
+                        "Try add '```' to close the code block",
+                        Some(
+                            self.source_manager
+                                .fix_span(code_span),
+                        ),
+                    )
+                    .commit();
+            } else {
+                code_end_span.start = self.cursor as u32;
+                self.cursor += 3;
+                code_end_span.end = self.cursor as u32;
+            }
+            tokens.push(Token::new(TokenKind::CustomCodeBlockStart(name), code_span));
+            tokens.extend(temp_tokens);
+            tokens.push(Token::new(TokenKind::CustomCodeBlockEnd(name), code_end_span));
+            self.block_lexer_matcher.insert(name, matcher);
+            true
+        } else {
+            self.rewind_cursor();
+            false
+        }
+
+    }
+
+    fn skip_while_code_block_end(&mut self, start: usize) -> Span {
+        self.cursor = start;
+        loop {
+            let ch = self.peek_char();
+            if ch.is_none() {
+                self.diagnostics
+                    .builder()
+                    .report(
+                        DiagnosticLevel::Error,
+                        "Unterminated lexer block",
+                        self.source_manager
+                            .get_source_info(Span::from_usize(self.cursor, self.cursor + 1)),
+                        None,
+                    )
+                    .add_error(
+                        "Try add '```' to close the lexer block",
+                        Some(
+                            self.source_manager
+                                .fix_span(Span::from_usize(self.cursor, self.cursor + 1)),
+                        ),
+                    )
+                    .commit();
+                break;
+            }
+
+            let ch = unsafe { ch.unwrap_unchecked() };
+
+            if ch == '`'
+                && ParenMatching::is_triple_back_tick_block(
+                    &self.source_manager.get_source(),
+                    self.cursor,
+                    b"```",
+                )
+            {
+                let span = Span::from_usize(start, self.cursor);
+                self.cursor += 3;
+                return span
+            }
+
+            self.next_char();
+        }
+        Span::from_usize(start, self.cursor)
+    }
+
+    fn lex_back_tick(&mut self, matcher: &mut EbnfParserMatcher, tokens: &mut Vec<Token>, is_code_block: bool) -> bool {
+        if is_code_block && ParenMatching::is_triple_back_tick_block(
+            &self.source_manager.get_source(),
+            self.cursor,
+            b"```",
+        ) {
+            return false;
+        }
         let lexer_block_bytes = b"```lexer";
         if ParenMatching::is_triple_back_tick_block(
             &self.source_manager.get_source(),
@@ -694,48 +814,60 @@ impl Lexer {
             lexer_block_bytes,
         ) {
             self.cursor += lexer_block_bytes.len();
-            let start = self.cursor;
-            loop {
-                let ch = self.peek_char();
-                if ch.is_none() {
+            let mut start = self.cursor;
+            let mut name = None;
+            if self.peek_char() == Some('(') {
+                let temp_start = self.cursor;
+                self.next_char();
+                let tokens = self.lex_helper(matcher, vec![')'], true, false);
+                self.next_char();
+                if tokens.len() != 1 {
+                    let info = self
+                        .source_manager
+                        .get_source_info(Span::from_usize(temp_start, self.cursor + 1));
                     self.diagnostics
                         .builder()
                         .report(
                             DiagnosticLevel::Error,
-                            "Unterminated lexer block",
-                            self.source_manager
-                                .get_source_info(Span::from_usize(self.cursor, self.cursor + 1)),
+                            "Invalid lexer block name",
+                            info,
                             None,
                         )
                         .add_error(
-                            "Try add '```' to close the lexer block",
+                            "Add a name to the lexer block",
                             Some(
                                 self.source_manager
-                                    .fix_span(Span::from_usize(self.cursor, self.cursor + 1)),
+                                    .fix_span(Span::from_usize(temp_start, self.cursor + 1)),
                             ),
                         )
                         .commit();
-                    break;
+                } else {
+                    let token = tokens.first().unwrap();
+                    if !token.is_identifier() {
+                        let info = self.source_manager.get_source_info(token.span);
+                        self.diagnostics
+                            .builder()
+                            .report(
+                                DiagnosticLevel::Error,
+                                "Invalid lexer block name",
+                                info,
+                                None,
+                            )
+                            .add_error(
+                                "Invalid lexer block name",
+                                Some(self.source_manager.fix_span(token.span)),
+                            )
+                            .commit();
+                    } else {
+                        let bytes = &self.source_manager[token.span];
+                        name = Some(std::str::from_utf8(bytes).unwrap().to_string());
+                    }
                 }
-
-                let ch = unsafe { ch.unwrap_unchecked() };
-
-                if ch == '`'
-                    && ParenMatching::is_triple_back_tick_block(
-                        &self.source_manager.get_source(),
-                        self.cursor,
-                        b"```",
-                    )
-                {
-                    let span = Span::from_usize(start, self.cursor);
-                    self.parse_ebnf_lexer_block(span);
-                    self.cursor += 3;
-                    break;
-                }
-
-                self.next_char();
+                start = self.cursor;
             }
-            return;
+            let span = self.skip_while_code_block_end(start);
+            self.parse_ebnf_lexer_block(matcher, name, span);
+            return true;
         }
 
         if ParenMatching::is_triple_back_tick_block(
@@ -743,15 +875,21 @@ impl Lexer {
             self.cursor,
             b"```",
         ) {
+            
             let dummy = (TokenKind::Unknown, Span::from_usize(0, 0));
-            let last = self.paren_balance.last().unwrap_or(&dummy);
+            let last = self.paren_balance.last().unwrap_or(&dummy).clone();
             let span = Span::from_usize(self.cursor, self.cursor + 3);
             self.cursor += 3;
+            
+            if self.try_lex_using_custom_matcher(tokens) {
+                return true;
+            }
+            
             tokens.push(Token::new(TokenKind::TripleBackTick, span));
 
             let (token, _) = last;
 
-            if token == &TokenKind::TripleBackTick {
+            if token == TokenKind::TripleBackTick {
                 self.expect_block_or_paren(TokenKind::TripleBackTick);
             } else {
                 let mut to_be_remove_index = -1;
@@ -776,6 +914,7 @@ impl Lexer {
             tokens.push(Token::new(TokenKind::Backtick, span));
             self.next_char();
         }
+        true
     }
 
     fn expect_block_or_paren(&mut self, kind: TokenKind) {
@@ -857,9 +996,9 @@ impl Lexer {
         }
     }
 
-    fn is_start_of_identifier(&mut self) -> bool {
+    fn is_start_of_identifier(&mut self, matcher: &EbnfParserMatcher) -> bool {
         // println!("str: {:?}", std::str::from_utf8(&self.source_manager.get_source()[self.cursor..]);
-        self.local_lexer_matcher
+        matcher
             .match_native(
                 ebnf::ast::NativeCallKind::StartIdentifier,
                 &self.source_manager.get_source()[self.cursor..],
@@ -869,8 +1008,8 @@ impl Lexer {
             .is_some()
     }
 
-    fn is_valid_digit(&mut self) -> bool {
-        self.local_lexer_matcher
+    fn is_valid_digit(&mut self, matcher: &EbnfParserMatcher) -> bool {
+        matcher
             .match_native(
                 ebnf::ast::NativeCallKind::Digit,
                 &self.source_manager.get_source()[self.cursor..],
@@ -880,8 +1019,8 @@ impl Lexer {
             .is_some()
     }
 
-    fn is_valid_operator_start(&mut self) -> bool {
-        self.local_lexer_matcher
+    fn is_valid_operator_start(&mut self, matcher: &EbnfParserMatcher) -> bool {
+        matcher
             .match_native(
                 ebnf::ast::NativeCallKind::StartOperator,
                 &self.source_manager.get_source()[self.cursor..],
@@ -891,7 +1030,7 @@ impl Lexer {
             .is_some()
     }
 
-    fn lex_helper(&mut self, until: Vec<char>, should_check_paren: bool) -> Vec<Token> {
+    fn lex_helper(&mut self, matcher: &mut EbnfParserMatcher, until: Vec<char>, should_check_paren: bool, is_code_block: bool) -> Vec<Token> {
         let mut tokens = Vec::new();
         let mut loop_iterations = 0usize;
         let mut last_cursor: Option<usize> = None;
@@ -947,7 +1086,7 @@ impl Lexer {
                 break;
             }
 
-            if let Some((matched, kind)) = self.local_lexer_matcher.try_match_expr(
+            if let Some((matched, kind)) = matcher.try_match_expr(
                 &self.source_manager.get_source()[self.cursor..],
                 RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
                 &mut self.diagnostics,
@@ -1003,11 +1142,11 @@ impl Lexer {
                 c if self.is_valid_comment(c) => {
                     self.lex_comment(&mut tokens);
                 }
-                _ if self.is_valid_digit() || !should_run_custom_match => {
-                    self.lex_number(&mut tokens);
+                _ if self.is_valid_digit(matcher) || !should_run_custom_match => {
+                    self.lex_number(&matcher, &mut tokens);
                 }
-                _ if self.is_start_of_identifier() => {
-                    self.lex_identifier(&mut tokens, true);
+                _ if self.is_start_of_identifier(matcher) => {
+                    self.lex_identifier(&matcher, &mut tokens, true);
                 }
                 '$' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
@@ -1086,11 +1225,11 @@ impl Lexer {
                     let span = self.skip_while(|c| c == ':');
                     tokens.push(Token::new(TokenKind::Colon, span));
                 }
-                _ if self.is_valid_operator_start() => {
-                    self.lex_operator(&mut tokens);
+                _ if self.is_valid_operator_start(&matcher) => {
+                    self.lex_operator(&matcher, &mut tokens);
                 }
                 '"' => {
-                    self.lex_double_quoted_string(&mut tokens);
+                    self.lex_double_quoted_string(matcher, &mut tokens);
                 }
                 '\'' => {
                     self.lex_character_literal(&mut tokens);
@@ -1106,7 +1245,9 @@ impl Lexer {
                     self.next_char();
                 }
                 '`' => {
-                    self.lex_back_tick(&mut tokens);
+                    if !self.lex_back_tick(matcher, &mut tokens, is_code_block) {
+                        break;
+                    }
                 }
                 _ => {
                     self.check_balanced_paren(&until);
@@ -1505,9 +1646,10 @@ impl Lexer {
     }
 
     pub fn lex(&mut self) -> Vec<Token> {
-        self.local_lexer_matcher.init(None, &mut self.diagnostics);
+        let mut matcher = EbnfParserMatcher::new();
+        matcher.init(None, &mut self.diagnostics);
         let cursor = self.cursor;
-        let mut tokens = self.lex_helper(Vec::new(), true);
+        let mut tokens = self.lex_helper(&mut matcher, Vec::new(), true, false);
         let mut i = 0;
         for t in tokens.iter().rev() {
             if t.is_eof() {
