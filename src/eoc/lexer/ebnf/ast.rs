@@ -9,7 +9,7 @@ use std::{
 use crate::eoc::{
     ast::identifier::Identifier,
     lexer::{
-        str_utils::{ ByteToCharIter, decode_unicode_escape_sequence },
+        str_utils::{ decode_unicode_escape_sequence, get_utf8_char_len, ByteToCharIter },
         token::{Token, TokenKind},
         utils::{
             is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point,
@@ -1605,10 +1605,10 @@ impl EbnfParserMatcher {
             return None;
         }
 
-        let mut i = 1;
+        let mut i = get_utf8_char_len(s[0]);
         while i < s.len() {
-            let end = ByteToCharIter::new(&s[i..]).utf8_len_after_skip(1);
-            let temp_source = &s[i..i + end];
+            let end = get_utf8_char_len(s[i]);
+            let temp_source = &s[i..(i + end).min(s.len() - 1)];
             if self.match_native(NativeCallKind::ContIdentifier, temp_source, source_manager, diagnostic).is_none() {
                 return Some(&s[..i]);
             }
@@ -1953,10 +1953,10 @@ impl EbnfParserMatcher {
             return None;
         }
 
-        let mut i = 1;
+        let mut i = get_utf8_char_len(s[0]);
         while i < s.len() {
-            let end = ByteToCharIter::new(&s[i..]).utf8_len_after_skip(1);
-            let temp_source = &s[i..i + end];
+            let end = get_utf8_char_len(s[i]);
+            let temp_source = &s[i..(i + end).min(s.len() - 1)];
             if self.match_native(NativeCallKind::ContOperator, temp_source, source_manager, diagnostic).is_none() {
                 return Some(&s[..i]);
             }
