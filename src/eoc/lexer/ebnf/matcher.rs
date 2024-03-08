@@ -451,10 +451,14 @@ pub(crate) struct EbnfParserMatcher(Option<CustomEbnfParserMatcher>);
 
 impl EbnfParserMatcher {
     pub(crate) fn init(&mut self, expr: Option<EbnfExpr>, diagnostic: &mut Diagnostic) {
-        if expr.is_some() {
+        if let Some(expr) = expr {
+            if expr.is_empty() {
+                return;   
+            }
+
             self.0
                 .get_or_insert_with(CustomEbnfParserMatcher::new)
-                .init(expr, diagnostic);
+                .init(Some(expr), diagnostic);
         }
     }
 
@@ -648,7 +652,7 @@ impl EbnfParserMatcher {
 
         let c = c.unwrap();
 
-        if Identifier::is_operator_start_code_point(c) {
+        if !Identifier::is_operator_start_code_point(c) {
             return None;
         }
 
