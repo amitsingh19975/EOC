@@ -102,6 +102,8 @@ pub(crate) enum TokenKind {
 
     // ========= End Ebnf ==========
 
+    CustomCodeBlockStart(UniqueString),
+    CustomCodeBlockEnd(UniqueString),
     CustomToken(UniqueString),
     Unknown,
 }
@@ -469,10 +471,12 @@ impl Token {
     }
 
     pub(crate) fn to_string(&self, source_manager: &SourceManager) -> String {
-        if let TokenKind::CustomToken(s) = self.kind {
-            format!("Token(CustomToken('{}'), '{}', {:?}, len={})", s, escape_string(self.as_str(source_manager)), self.span, self.len())
-        } else {
-            format!("Token({:?}, '{}', {:?}, len={})", self.kind, escape_string(self.as_str(source_manager)), self.span, self.len())
+        match self.kind {
+            TokenKind::CustomToken(s) => format!("Token(CustomToken('{}'), '{}', {:?}, len={})", s, escape_string(self.as_str(source_manager)), self.span, self.len()),
+            TokenKind::CustomCodeBlockStart(s) => format!("Token(CustomCodeBlockStart('{}'), '{}', {:?}, len={})", s, escape_string(self.as_str(source_manager)), self.span, self.len()),
+            TokenKind::CustomCodeBlockEnd(s) => format!("Token(CustomCodeBlockEnd('{}'), '{}', {:?}, len={})", s, escape_string(self.as_str(source_manager)), self.span, self.len()),
+            _ => format!("Token({:?}, '{}', {:?}, len={})", self.kind, escape_string(self.as_str(source_manager)), self.span, self.len())
+            
         }
     }
 }
