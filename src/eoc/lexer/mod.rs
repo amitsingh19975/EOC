@@ -668,7 +668,7 @@ impl Lexer {
         next == '/' || next == '*'
     }
 
-    fn parse_ebnf_lexer_block(&mut self, matcher: &mut EbnfParserMatcher, name: Option<String>, span: Span) {
+    fn parse_ebnf_lexer_block(&mut self, matcher: &mut EbnfParserMatcher, name_token: Option<Token>, span: Span) {
         let mut enbf_lexer = EbnfLexer::new(
             &self.source_manager,
             &mut self.diagnostics,
@@ -677,10 +677,26 @@ impl Lexer {
         );
         let tokens = enbf_lexer.lex();
         let program = EbnfParser::parse(tokens, &self.source_manager, &mut self.diagnostics);
-        if let Some(name) = name {
+        if let Some(name_token) = name_token {
+            let name = std::str::from_utf8(&self.source_manager[name_token.span]).unwrap();
             let mut matcher = EbnfParserMatcher::new();
             matcher.init(Some(program), &mut self.diagnostics);
             let name = UniqueString::new(name);
+            if self.block_lexer_matcher.contains_key(&name) {
+                self.diagnostics
+                    .builder()
+                    .report(
+                        DiagnosticLevel::Error,
+                        "Duplicate lexer block name",
+                        self.source_manager.get_source_info(name_token.span),
+                        None,
+                    )
+                    .add_error(
+                        "Change the name of the lexer block",
+                        Some(self.source_manager.fix_span(name_token.span)),
+                    )
+                    .commit();
+            }
             self.block_lexer_matcher.insert(name, matcher);
         } else {
             matcher.init(Some(program), &mut self.diagnostics);
@@ -815,7 +831,7 @@ impl Lexer {
         ) {
             self.cursor += lexer_block_bytes.len();
             let mut start = self.cursor;
-            let mut name = None;
+            let mut name_token = None;
             if self.peek_char() == Some('(') {
                 let temp_start = self.cursor;
                 self.next_char();
@@ -859,14 +875,13 @@ impl Lexer {
                             )
                             .commit();
                     } else {
-                        let bytes = &self.source_manager[token.span];
-                        name = Some(std::str::from_utf8(bytes).unwrap().to_string());
+                        name_token = Some(token.clone());
                     }
                 }
                 start = self.cursor;
             }
             let span = self.skip_while_code_block_end(start);
-            self.parse_ebnf_lexer_block(matcher, name, span);
+            self.parse_ebnf_lexer_block(matcher, name_token, span);
             return true;
         }
 
