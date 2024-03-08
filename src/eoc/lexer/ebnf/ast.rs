@@ -818,7 +818,7 @@ impl EbnfExpr {
                     while i < matched.len() {
                         let end = ByteToCharIter::new(&matched[i..])
                             .utf8_len_after_skip(e.get_max_byte_len(Some(env)) as usize);
-                        let temp_source = &matched[i..i + end];
+                        let temp_source = &matched[i..(i + end).min(matched.len())];
                         if let Some(_) = e.match_expr(matcher, temp_source, env, source_manager, diagnostic)
                         {
                             matched = &matched[0..i];
