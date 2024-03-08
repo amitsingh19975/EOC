@@ -231,7 +231,7 @@ impl Lexer {
     ///                          (\.[0-9A-Fa-f][0-9A-Fa-f_]*)?[pP][+-]?[0-9][0-9_]*
     fn lex_number(&mut self, matcher: &EbnfParserMatcher, tokens: &mut Vec<Token>) -> bool {
         let temp = matcher.match_native(
-            ebnf::ast::NativeCallKind::Integer,
+            ebnf::native_call::NativeCallKind::Integer,
             &self.source_manager.get_source()[self.cursor..],
             RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
             &mut self.diagnostics,
@@ -246,7 +246,7 @@ impl Lexer {
         }
 
         let temp = matcher.match_native(
-            ebnf::ast::NativeCallKind::FloatingPoint,
+            ebnf::native_call::NativeCallKind::FloatingPoint,
             &self.source_manager.get_source()[self.cursor..],
             RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
             &mut self.diagnostics,
@@ -998,7 +998,7 @@ impl Lexer {
         // println!("str: {:?}", std::str::from_utf8(&self.source_manager.get_source()[self.cursor..]);
         matcher
             .match_native(
-                ebnf::ast::NativeCallKind::StartIdentifier,
+                ebnf::native_call::NativeCallKind::StartIdentifier,
                 &self.source_manager.get_source()[self.cursor..],
                 RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
                 &mut self.diagnostics,
@@ -1009,7 +1009,7 @@ impl Lexer {
     fn is_valid_digit(&mut self, matcher: &EbnfParserMatcher) -> bool {
         matcher
             .match_native(
-                ebnf::ast::NativeCallKind::Digit,
+                ebnf::native_call::NativeCallKind::Digit,
                 &self.source_manager.get_source()[self.cursor..],
                 RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
                 &mut self.diagnostics,
@@ -1020,7 +1020,7 @@ impl Lexer {
     fn is_valid_operator_start(&mut self, matcher: &EbnfParserMatcher) -> bool {
         matcher
             .match_native(
-                ebnf::ast::NativeCallKind::StartOperator,
+                ebnf::native_call::NativeCallKind::StartOperator,
                 &self.source_manager.get_source()[self.cursor..],
                 RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
                 &mut self.diagnostics,
