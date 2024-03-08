@@ -2021,7 +2021,7 @@ impl EbnfParserMatcher {
     }
 
     pub(crate) fn try_match_expr<'b>(
-        &mut self,
+        &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &mut Diagnostic,
