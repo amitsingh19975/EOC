@@ -4,20 +4,19 @@ use crate::eoc::{ast::identifier::Identifier, utils::{source_manager, span::Span
 
 use super::token::TokenKind;
 
+const UTF_8_LOOKUP: [u8; 16] = [ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 4 ];
+
+fn get_utf8_char_len(b: u8) -> usize {
+    UTF_8_LOOKUP[(b >> 4) as usize] as usize
+}
+
 pub(crate) fn valid_utf8_character_with_char_len(source: &[u8]) -> (Option<char>, usize) {
-    let mut bytes = [0; 4];
-    let mut i = 0;
-    while i < 4 {
-        if i >= source.len() {
-            return (None, i);
-        }
-        bytes[i] = source[i];
-        if let Some(ch) = std::str::from_utf8(&bytes[0..i + 1]).ok() {
-            return (Some(ch.chars().next().unwrap()), i + 1);
-        }
-        i += 1;
+    if source.is_empty() {
+        return (None, 0);
     }
-    (None, i)
+    let first = source[0];
+    let len = get_utf8_char_len(first);
+    std::str::from_utf8(&source[0..len]).ok().map(|s| (Some(s.chars().next().unwrap()), len)).unwrap_or((None, 0))
 }
 
 pub(crate) fn is_valid_identifier_continuation_code_point(c: char) -> bool {
