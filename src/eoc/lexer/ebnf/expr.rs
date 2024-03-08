@@ -660,6 +660,18 @@ impl EbnfExpr {
             }
         }
     }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        match self {
+            EbnfExpr::Statements(exprs, ..) => exprs.iter().fold(true, |acc, e| acc && !e.is_empty()),
+            EbnfExpr::Alternative(exprs, set, ..) => exprs.iter().fold(true, |acc, e| acc && !e.is_empty()) && set.is_empty(),
+            EbnfExpr::Concat(exprs, ..) => exprs.iter().fold(true, |acc, e| acc && !e.is_empty()),
+            EbnfExpr::Exception(exprs, ..) => exprs.iter().fold(true, |acc, e| acc && !e.is_empty()),
+            EbnfExpr::Extend(exprs, ..) => exprs.iter().fold(true, |acc, e| acc && !e.is_empty()),
+            EbnfExpr::Variable { expr, .. } => expr.is_empty(),
+            _ => false,
+        }
+    } 
 }
 
 impl Display for EbnfExpr {
