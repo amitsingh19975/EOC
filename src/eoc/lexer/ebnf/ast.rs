@@ -55,9 +55,32 @@ enum BinaryOperator {
     RangeEqual,  // "..."
 }
 
+impl From<TokenKind> for BinaryOperator {
+    fn from(kind: TokenKind) -> Self {
+        match kind {
+            TokenKind::Pipe => Self::Alternative,
+            TokenKind::Comma => Self::Concat,
+            TokenKind::Exception => Self::Exception,
+            TokenKind::Plus => Self::Extend,
+            TokenKind::Range => Self::Range,
+            TokenKind::RangeEqual => Self::RangeEqual,
+            _ => unreachable!(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum UnaryOperator {
     Optional,
+}
+
+impl From<TokenKind> for UnaryOperator {
+    fn from(kind: TokenKind) -> Self {
+        match kind {
+            TokenKind::QuestionMark => Self::Optional,
+            _ => unreachable!(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -130,52 +153,26 @@ impl PartialEq<[u8]> for TerminalValue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum EbnfExpr {
-    Statements(Vec<EbnfExpr>),
-    Identifier(String, Option<(SourceManagerDiagnosticInfo, Span)>),
-    BinaryExpr(BinaryOperator, Box<EbnfExpr>, Box<EbnfExpr>),
-    UnaryExpr(UnaryOperator, Box<EbnfExpr>),
-    Variable {
-        name: String,
-        expr: Box<EbnfExpr>,
-        is_def: bool,
-    },
-    Terminal(TerminalValue),
-    Repetition(Box<EbnfExpr>),
-    Grouping(Box<EbnfExpr>),
-    Optional(Box<EbnfExpr>),
-}
-
-impl EbnfExpr {
-    fn is_char(&self) -> bool {
-        match self {
-            EbnfExpr::Terminal(t) => t.is_char(),
-            _ => false,
-        }
-    }
-}
-
 type EbnfExprMaxByteLen = u8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum FlattenEbnfExpr {
+pub(crate) enum EbnfExpr {
     Identifier(String, Option<(SourceManagerDiagnosticInfo, Span)>),
     Alternative(
-        Vec<FlattenEbnfExpr>,
+        Vec<EbnfExpr>,
         HashSet<TerminalValue>,
         EbnfExprMaxByteLen,
     ),
-    Concat(Vec<FlattenEbnfExpr>, EbnfExprMaxByteLen),
-    Exception(Vec<FlattenEbnfExpr>, EbnfExprMaxByteLen),
-    Extend(Vec<FlattenEbnfExpr>, EbnfExprMaxByteLen),
-    Optional(Box<FlattenEbnfExpr>, EbnfExprMaxByteLen),
-    Repetition(Box<FlattenEbnfExpr>, EbnfExprMaxByteLen),
+    Concat(Vec<EbnfExpr>, EbnfExprMaxByteLen),
+    Exception(Vec<EbnfExpr>, EbnfExprMaxByteLen),
+    Extend(Vec<EbnfExpr>, EbnfExprMaxByteLen),
+    Optional(Box<EbnfExpr>, EbnfExprMaxByteLen),
+    Repetition(Box<EbnfExpr>, EbnfExprMaxByteLen),
     Terminal(TerminalValue),
-    Statements(Vec<FlattenEbnfExpr>, EbnfExprMaxByteLen),
+    Statements(Vec<EbnfExpr>, EbnfExprMaxByteLen),
     Variable {
         name: String,
-        expr: Box<FlattenEbnfExpr>,
+        expr: Box<EbnfExpr>,
         is_def: bool,
     },
     Range {
@@ -197,7 +194,7 @@ impl<'a> EbnfParser<'a> {
         tokens: Vec<Token>,
         source_manager: &SourceManager,
         diagnostic: &mut Diagnostic,
-    ) -> FlattenEbnfExpr {
+    ) -> EbnfExpr {
         let mut parser = EbnfParser {
             source_manager,
             diagnostic,
@@ -205,8 +202,7 @@ impl<'a> EbnfParser<'a> {
             cursor: 0,
         };
 
-        let expr = parser.parse_statements();
-        FlattenEbnfExpr::new(expr)
+        parser.parse_statements()
     }
 
     fn is_empty(&self) -> bool {
@@ -239,7 +235,7 @@ impl<'a> EbnfParser<'a> {
             }
         }
 
-        EbnfExpr::Statements(statements)
+        EbnfExpr::Statements(statements, 1)
     }
 
     fn get_string_from_token(&self, token: &Token) -> String {
@@ -353,17 +349,16 @@ impl<'a> EbnfParser<'a> {
             TokenKind::OpenParen => {
                 self.next();
                 self.parse_paren_expr(TokenKind::OpenParen, 0)
-                    .map(|(expr, span)| (EbnfExpr::Grouping(Box::new(expr)), span))
             }
             TokenKind::OpenBracket => {
                 self.next();
                 self.parse_paren_expr(TokenKind::OpenBracket, 0)
-                    .map(|(expr, span)| (EbnfExpr::Optional(Box::new(expr)), span))
+                    .map(|(expr, span)| (EbnfExpr::Optional(Box::new(expr), 1), span))
             }
             TokenKind::OpenBrace => {
                 self.next();
                 self.parse_paren_expr(TokenKind::OpenBrace, 0)
-                    .map(|(expr, span)| (EbnfExpr::Repetition(Box::new(expr)), span))
+                    .map(|(expr, span)| (EbnfExpr::Repetition(Box::new(expr), 1), span))
             }
             _ => self.parse_primary(),
         }
@@ -391,13 +386,7 @@ impl<'a> EbnfParser<'a> {
                 self.next();
                 let (lhs_expr, span) = lhs.unwrap();
                 lhs = Some((
-                    EbnfExpr::UnaryExpr(
-                        match token.kind {
-                            TokenKind::QuestionMark => UnaryOperator::Optional,
-                            _ => unreachable!(),
-                        },
-                        Box::new(lhs_expr),
-                    ),
+                    EbnfExpr::from_unary(token.kind.into(), lhs_expr),
                     span,
                 ));
                 continue;
@@ -459,19 +448,7 @@ impl<'a> EbnfParser<'a> {
                 }
 
                 lhs = Some((
-                    EbnfExpr::BinaryExpr(
-                        match op {
-                            TokenKind::Pipe => BinaryOperator::Alternative,
-                            TokenKind::Comma => BinaryOperator::Concat,
-                            TokenKind::Exception => BinaryOperator::Exception,
-                            TokenKind::Plus => BinaryOperator::Extend,
-                            TokenKind::Range => BinaryOperator::Range,
-                            TokenKind::RangeEqual => BinaryOperator::RangeEqual,
-                            _ => unreachable!(),
-                        },
-                        Box::new(lhs_expr),
-                        Box::new(rhs),
-                    ),
+                    EbnfExpr::try_merge_binary(op.into(), lhs_expr, rhs),
                     rhs_span,
                 ));
             } else {
@@ -564,14 +541,18 @@ impl<'a> EbnfParser<'a> {
     }
 }
 
-impl FlattenEbnfExpr {
-    fn new(expr: EbnfExpr) -> Self {
-        Self::from_expr(expr)
+impl EbnfExpr {
+    
+    fn is_char(&self) -> bool {
+        match self {
+            EbnfExpr::Terminal(t) => t.is_char(),
+            _ => false,
+        }
     }
 
     fn get_max_byte_len(&self, env: Option<&EbnfParserMatcherEnv>) -> u8 {
         match self {
-            FlattenEbnfExpr::Identifier(id, ..) => {
+            EbnfExpr::Identifier(id, ..) => {
                 if let Some(env) = env {
                     if let Some(el) = env.get(id) {
                         return el.get_max_byte_len(Some(env));
@@ -580,30 +561,30 @@ impl FlattenEbnfExpr {
 
                 1
             }
-            FlattenEbnfExpr::Alternative(_, _, m)
-            | FlattenEbnfExpr::Concat(_, m)
-            | FlattenEbnfExpr::Extend(_, m)
-            | FlattenEbnfExpr::Optional(_, m)
-            | FlattenEbnfExpr::Repetition(_, m)
-            | FlattenEbnfExpr::Statements(_, m)
-            | FlattenEbnfExpr::Exception(_, m) => *m,
-            FlattenEbnfExpr::Terminal(t) => t.len() as u8,
-            FlattenEbnfExpr::Variable { expr, .. } => expr.get_max_byte_len(None),
-            FlattenEbnfExpr::Range { .. } => 1,
+            EbnfExpr::Alternative(_, _, m)
+            | EbnfExpr::Concat(_, m)
+            | EbnfExpr::Extend(_, m)
+            | EbnfExpr::Optional(_, m)
+            | EbnfExpr::Repetition(_, m)
+            | EbnfExpr::Statements(_, m)
+            | EbnfExpr::Exception(_, m) => *m,
+            EbnfExpr::Terminal(t) => t.len() as u8,
+            EbnfExpr::Variable { expr, .. } => expr.get_max_byte_len(None),
+            EbnfExpr::Range { .. } => 1,
         }
     }
 
     fn recalculate_max_byte_len(self, env: &mut EbnfParserMatcherEnv) -> Self {
         match self {
-            FlattenEbnfExpr::Identifier(id, span) => {
+            EbnfExpr::Identifier(id, span) => {
                 if let Some(el) = env.remove(&id) {
                     let temp = el.recalculate_max_byte_len(env);
                     env.insert(id.clone(), temp);
                 }
                 Self::Identifier(id, span)
             }
-            FlattenEbnfExpr::Variable { expr, .. } => expr.recalculate_max_byte_len(env),
-            FlattenEbnfExpr::Alternative(v, h, ..) => {
+            EbnfExpr::Variable { expr, .. } => expr.recalculate_max_byte_len(env),
+            EbnfExpr::Alternative(v, h, ..) => {
                 let mut max_byte_len = 1u8;
                 for expr in v.iter() {
                     max_byte_len = max_byte_len.max(expr.get_max_byte_len(Some(env)));
@@ -613,33 +594,33 @@ impl FlattenEbnfExpr {
                 }
                 Self::Alternative(v, h, max_byte_len)
             }
-            FlattenEbnfExpr::Concat(v, ..) => {
+            EbnfExpr::Concat(v, ..) => {
                 let mut max_byte_len = 1u8;
                 for expr in v.iter() {
                     max_byte_len = max_byte_len.max(expr.get_max_byte_len(Some(env)));
                 }
                 Self::Concat(v, max_byte_len)
             }
-            FlattenEbnfExpr::Exception(v, ..) => {
+            EbnfExpr::Exception(v, ..) => {
                 let mut max_byte_len = 1u8;
                 for expr in v.iter() {
                     max_byte_len = max_byte_len.max(expr.get_max_byte_len(Some(env)));
                 }
                 Self::Exception(v, max_byte_len)
             }
-            FlattenEbnfExpr::Extend(v, ..) => {
+            EbnfExpr::Extend(v, ..) => {
                 let mut max_byte_len = 1u8;
                 for expr in v.iter() {
                     max_byte_len = max_byte_len.max(expr.get_max_byte_len(Some(env)));
                 }
                 Self::Extend(v, max_byte_len)
             }
-            FlattenEbnfExpr::Optional(o, ..) => {
+            EbnfExpr::Optional(o, ..) => {
                 let max_byte_len = o.get_max_byte_len(Some(env));
                 Self::Optional(o, max_byte_len)
             }
-            FlattenEbnfExpr::Repetition(o, ..) => Self::Repetition(o, u8::MAX),
-            FlattenEbnfExpr::Statements(v, ..) => {
+            EbnfExpr::Repetition(o, ..) => Self::Repetition(o, u8::MAX),
+            EbnfExpr::Statements(v, ..) => {
                 let mut max_byte_len = 1u8;
                 for expr in v.iter() {
                     max_byte_len = max_byte_len.max(expr.get_max_byte_len(Some(env)));
@@ -650,43 +631,8 @@ impl FlattenEbnfExpr {
         }
     }
 
-    fn from_expr(expr: EbnfExpr) -> Self {
-        match expr {
-            EbnfExpr::Statements(s) => {
-                let mut statements = Vec::new();
-                let mut max_byte_len = 1u8;
-                for expr in s {
-                    let expr = Self::new(expr);
-                    max_byte_len = max_byte_len.max(expr.get_max_byte_len(None));
-                    statements.push(expr);
-                }
-                Self::Statements(statements, max_byte_len)
-            }
-            EbnfExpr::Identifier(id, info) => Self::Identifier(id, info),
-            EbnfExpr::BinaryExpr(op, lhs, rhs) => Self::from_binary(op, *lhs, *rhs),
-            EbnfExpr::UnaryExpr(op, expr) => Self::from_unary(op, *expr),
-            EbnfExpr::Variable { name, expr, is_def } => Self::Variable {
-                name,
-                expr: Box::new(Self::new(*expr)),
-                is_def,
-            },
-            EbnfExpr::Terminal(t) => FlattenEbnfExpr::Terminal(t),
-            EbnfExpr::Repetition(r) => {
-                let r = Self::new(*r);
-                let max_byte_len = r.get_max_byte_len(None);
-                Self::Repetition(Box::new(r), max_byte_len)
-            }
-            EbnfExpr::Grouping(g) => Self::new(*g),
-            EbnfExpr::Optional(o) => {
-                let o = Self::new(*o);
-                let max_byte_len = o.get_max_byte_len(None);
-                Self::Optional(Box::new(o), max_byte_len)
-            }
-        }
-    }
-
     fn try_move_terminals_to_hash_set(
-        items: &mut Vec<FlattenEbnfExpr>,
+        items: &mut Vec<EbnfExpr>,
         set: &mut HashSet<TerminalValue>,
     ) {
         let mut i = 0;
@@ -703,9 +649,9 @@ impl FlattenEbnfExpr {
 
     fn try_merge_binary(
         op: BinaryOperator,
-        lhs: FlattenEbnfExpr,
-        rhs: FlattenEbnfExpr,
-    ) -> FlattenEbnfExpr {
+        lhs: EbnfExpr,
+        rhs: EbnfExpr,
+    ) -> EbnfExpr {
         match (op, lhs, rhs) {
             (
                 BinaryOperator::Alternative,
@@ -715,11 +661,11 @@ impl FlattenEbnfExpr {
                 lhs.extend(rhs);
                 l_set.extend(r_set);
                 Self::try_move_terminals_to_hash_set(&mut lhs, &mut l_set);
-                FlattenEbnfExpr::Alternative(lhs, l_set, l_max.max(r_max))
+                EbnfExpr::Alternative(lhs, l_set, l_max.max(r_max))
             }
             (BinaryOperator::Concat, Self::Concat(mut lhs, l_max), Self::Concat(rhs, r_max)) => {
                 lhs.extend(rhs);
-                FlattenEbnfExpr::Concat(lhs, l_max.max(r_max))
+                EbnfExpr::Concat(lhs, l_max.max(r_max))
             }
             (
                 BinaryOperator::Exception,
@@ -727,32 +673,32 @@ impl FlattenEbnfExpr {
                 Self::Exception(rhs, r_max),
             ) => {
                 lhs.extend(rhs);
-                FlattenEbnfExpr::Exception(lhs, l_max.max(r_max))
+                EbnfExpr::Exception(lhs, l_max.max(r_max))
             }
             (BinaryOperator::Extend, Self::Extend(mut lhs, l_max), Self::Extend(rhs, r_max)) => {
                 lhs.extend(rhs);
-                FlattenEbnfExpr::Extend(lhs, l_max.max(r_max))
+                EbnfExpr::Extend(lhs, l_max.max(r_max))
             }
             (BinaryOperator::Alternative, Self::Alternative(mut lhs, mut l_set, l_max), rhs) => {
                 let r_max = rhs.get_max_byte_len(None);
                 lhs.push(rhs);
                 Self::try_move_terminals_to_hash_set(&mut lhs, &mut l_set);
-                FlattenEbnfExpr::Alternative(lhs, l_set, l_max.max(r_max))
+                EbnfExpr::Alternative(lhs, l_set, l_max.max(r_max))
             }
             (BinaryOperator::Concat, Self::Concat(mut lhs, l_max), rhs) => {
                 let r_max = rhs.get_max_byte_len(None);
                 lhs.push(rhs);
-                FlattenEbnfExpr::Concat(lhs, l_max.max(r_max))
+                EbnfExpr::Concat(lhs, l_max.max(r_max))
             }
             (BinaryOperator::Exception, Self::Exception(mut lhs, l_max), rhs) => {
                 let r_max = rhs.get_max_byte_len(None);
                 lhs.push(rhs);
-                FlattenEbnfExpr::Exception(lhs, l_max.max(r_max))
+                EbnfExpr::Exception(lhs, l_max.max(r_max))
             }
             (BinaryOperator::Extend, Self::Extend(mut lhs, l_max), rhs) => {
                 let r_max = rhs.get_max_byte_len(None);
                 lhs.push(rhs);
-                FlattenEbnfExpr::Extend(lhs, l_max.max(r_max))
+                EbnfExpr::Extend(lhs, l_max.max(r_max))
             }
             (_, lhs, rhs) => {
                 let l_max = lhs.get_max_byte_len(None);
@@ -767,7 +713,7 @@ impl FlattenEbnfExpr {
                     BinaryOperator::Extend => Self::Extend(vec![lhs, rhs], max_byte_len),
                     BinaryOperator::Range | BinaryOperator::RangeEqual => {
                         if let (Self::Terminal(lhs), Self::Terminal(rhs)) = (lhs, rhs) {
-                            FlattenEbnfExpr::Range {
+                            EbnfExpr::Range {
                                 lhs: lhs.as_char().unwrap(),
                                 rhs: rhs.as_char().unwrap(),
                                 inclusive: op == BinaryOperator::RangeEqual,
@@ -781,17 +727,10 @@ impl FlattenEbnfExpr {
         }
     }
 
-    fn from_binary(op: BinaryOperator, lhs: EbnfExpr, rhs: EbnfExpr) -> Self {
-        let lhs = Self::new(lhs);
-        let rhs = Self::new(rhs);
-        Self::try_merge_binary(op, lhs, rhs)
-    }
-
-    fn from_unary(op: UnaryOperator, expr: EbnfExpr) -> FlattenEbnfExpr {
-        let expr = Self::new(expr);
+    fn from_unary(op: UnaryOperator, expr: EbnfExpr) -> EbnfExpr {
         let max_byte_len = expr.get_max_byte_len(None);
         match op {
-            UnaryOperator::Optional => FlattenEbnfExpr::Optional(Box::new(expr), max_byte_len),
+            UnaryOperator::Optional => EbnfExpr::Optional(Box::new(expr), max_byte_len),
         }
     }
 
@@ -804,7 +743,7 @@ impl FlattenEbnfExpr {
         diagnostic: &mut Diagnostic,
     ) -> Option<&'a [u8]> {
         match self {
-            FlattenEbnfExpr::Identifier(id, .., info) => {
+            EbnfExpr::Identifier(id, .., info) => {
                 if NativeCallKind::is_valid_name(id) {
                     let kind = NativeCallKind::from(id.as_str());
                     return kind.call(matcher, s, source_manager, diagnostic);
@@ -827,7 +766,7 @@ impl FlattenEbnfExpr {
                     None
                 }
             }
-            FlattenEbnfExpr::Alternative(v, h, ..) => {
+            EbnfExpr::Alternative(v, h, ..) => {
                 let mut iter = ByteToCharIter::new(s);
                 if let Some(c) = iter.next() {
                     if h.contains(&TerminalValue::Char(c)) {
@@ -843,7 +782,7 @@ impl FlattenEbnfExpr {
                 }
                 None
             }
-            FlattenEbnfExpr::Concat(v, ..) => {
+            EbnfExpr::Concat(v, ..) => {
                 let mut end = 0usize;
 
                 for expr in v.iter() {
@@ -861,7 +800,7 @@ impl FlattenEbnfExpr {
                     Some(&s[..end])
                 }
             }
-            FlattenEbnfExpr::Exception(v, ..) => {
+            EbnfExpr::Exception(v, ..) => {
                 if v.is_empty() {
                     return None;
                 }
@@ -896,7 +835,7 @@ impl FlattenEbnfExpr {
 
                 Some(matched)
             }
-            FlattenEbnfExpr::Extend(v, ..) => {
+            EbnfExpr::Extend(v, ..) => {
                 if v.is_empty() {
                     return None;
                 }
@@ -921,7 +860,7 @@ impl FlattenEbnfExpr {
                     Some(&s[..end])
                 }
             }
-            FlattenEbnfExpr::Optional(o, ..) => {
+            EbnfExpr::Optional(o, ..) => {
                 let mut end = 0usize;
 
                 if let Some(s_) = o.match_expr(matcher, s, env, source_manager, diagnostic) {
@@ -930,7 +869,7 @@ impl FlattenEbnfExpr {
 
                 Some(&s[..end])
             }
-            FlattenEbnfExpr::Repetition(v, ..) => {
+            EbnfExpr::Repetition(v, ..) => {
                 let mut end = 0usize;
                 while let Some(s_) = v.match_expr(matcher, &s[end..], env, source_manager, diagnostic) {
                     end += s_.len();
@@ -943,7 +882,7 @@ impl FlattenEbnfExpr {
                 }
 
             }
-            FlattenEbnfExpr::Terminal(t) => {
+            EbnfExpr::Terminal(t) => {
                 let end = t.len_utf8();
                 if end > s.len() {
                     return None;
@@ -955,9 +894,9 @@ impl FlattenEbnfExpr {
 
                 None
             }
-            FlattenEbnfExpr::Statements(_, ..) => panic!("Expected expression, but got statements"),
-            FlattenEbnfExpr::Variable { .. } => panic!("Expected expression, but got variable"),
-            FlattenEbnfExpr::Range {
+            EbnfExpr::Statements(_, ..) => panic!("Expected expression, but got statements"),
+            EbnfExpr::Variable { .. } => panic!("Expected expression, but got variable"),
+            EbnfExpr::Range {
                 lhs,
                 rhs,
                 inclusive,
@@ -992,35 +931,35 @@ impl FlattenEbnfExpr {
     }
 }
 
-impl Display for FlattenEbnfExpr {
+impl Display for EbnfExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FlattenEbnfExpr::Statements(exprs, ..) => {
+            EbnfExpr::Statements(exprs, ..) => {
                 for expr in exprs {
                     writeln!(f, "{}", expr)?;
                 }
                 Ok(())
             }
-            FlattenEbnfExpr::Identifier(name, ..) => write!(f, "{}", name),
-            FlattenEbnfExpr::Variable { name, expr, is_def } => {
+            EbnfExpr::Identifier(name, ..) => write!(f, "{}", name),
+            EbnfExpr::Variable { name, expr, is_def } => {
                 if *is_def {
                     write!(f, "{} ::= {};", name, expr)
                 } else {
                     write!(f, "{} = {};", name, expr)
                 }
             }
-            FlattenEbnfExpr::Terminal(name) => write!(f, "'{}'", name),
-            FlattenEbnfExpr::Repetition(expr, ..) => {
+            EbnfExpr::Terminal(name) => write!(f, "'{}'", name),
+            EbnfExpr::Repetition(expr, ..) => {
                 write!(f, "{{ ")?;
                 write!(f, "{} ", *expr)?;
                 write!(f, "}}")
             }
-            FlattenEbnfExpr::Optional(expr, ..) => {
+            EbnfExpr::Optional(expr, ..) => {
                 write!(f, "[ ")?;
                 write!(f, "{} ", *expr)?;
                 write!(f, "]")
             }
-            FlattenEbnfExpr::Alternative(exprs, set, ..) => {
+            EbnfExpr::Alternative(exprs, set, ..) => {
                 write!(f, "(")?;
                 for t in set.iter() {
                     write!(f, "'{}' | ", t)?
@@ -1030,7 +969,7 @@ impl Display for FlattenEbnfExpr {
                 }
                 write!(f, ")")
             }
-            FlattenEbnfExpr::Concat(exprs, ..) => {
+            EbnfExpr::Concat(exprs, ..) => {
                 write!(f, "(")?;
                 write!(
                     f,
@@ -1043,7 +982,7 @@ impl Display for FlattenEbnfExpr {
                 )?;
                 write!(f, ")")
             }
-            FlattenEbnfExpr::Exception(exprs, ..) => {
+            EbnfExpr::Exception(exprs, ..) => {
                 write!(f, "(")?;
                 write!(
                     f,
@@ -1056,7 +995,7 @@ impl Display for FlattenEbnfExpr {
                 )?;
                 write!(f, ")")
             }
-            FlattenEbnfExpr::Extend(exprs, ..) => {
+            EbnfExpr::Extend(exprs, ..) => {
                 write!(f, "(")?;
                 write!(
                     f,
@@ -1069,7 +1008,7 @@ impl Display for FlattenEbnfExpr {
                 )?;
                 write!(f, ")")
             }
-            FlattenEbnfExpr::Range {
+            EbnfExpr::Range {
                 lhs,
                 rhs,
                 inclusive,
@@ -1296,7 +1235,7 @@ impl PartialEq<str> for NativeCallKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum EbnfParserEnvVariable {
-    Expr(FlattenEbnfExpr),
+    Expr(EbnfExpr),
     NativeCall(NativeCallKind),
 }
 
@@ -1350,7 +1289,7 @@ impl EbnfParserEnvVariable {
     }
 }
 
-impl FlattenEbnfExpr {
+impl EbnfExpr {
     fn init_env<'a>(
         self,
         env: &mut EbnfParserMatcherEnv,
@@ -1358,12 +1297,12 @@ impl FlattenEbnfExpr {
         diagnostic: &mut Diagnostic,
     ) {
         match self {
-            FlattenEbnfExpr::Statements(exprs, ..) => {
+            EbnfExpr::Statements(exprs, ..) => {
                 for expr in exprs {
                     expr.init_env(env, def, diagnostic)
                 }
             }
-            FlattenEbnfExpr::Variable { name, expr, is_def } => {
+            EbnfExpr::Variable { name, expr, is_def } => {
                 let mut new_expr = EbnfParserEnvVariable::Expr(*expr);
                 if is_def {
                     if !def.contains(&name) {
@@ -1568,46 +1507,46 @@ impl EbnfParserMatcher {
         self.add_native_call(NativeCallKind::StartIdentifier);
         self.add_native_call(NativeCallKind::ContIdentifier);
         let rep_expr =
-            FlattenEbnfExpr::Identifier(NativeCallKind::ContIdentifier.to_string(), None);
-        let expr = FlattenEbnfExpr::Concat(
+            EbnfExpr::Identifier(NativeCallKind::ContIdentifier.to_string(), None);
+        let expr = EbnfExpr::Concat(
             vec![
-                FlattenEbnfExpr::Identifier(NativeCallKind::StartIdentifier.to_string(), None),
-                FlattenEbnfExpr::Repetition(Box::new(rep_expr), 1),
+                EbnfExpr::Identifier(NativeCallKind::StartIdentifier.to_string(), None),
+                EbnfExpr::Repetition(Box::new(rep_expr), 1),
             ],
             1,
         );
 
-        let statement = FlattenEbnfExpr::Variable {
+        let statement = EbnfExpr::Variable {
             name: "identifier".to_string(),
             expr: Box::new(expr),
             is_def: false,
         };
-        let identifier = FlattenEbnfExpr::Statements(vec![statement], 1);
+        let identifier = EbnfExpr::Statements(vec![statement], 1);
         identifier.init_env(&mut self.env, &mut self.def, diagnostic);
     }
 
     fn add_operator_env(&mut self, diagnostic: &mut Diagnostic) {
         self.add_native_call(NativeCallKind::StartOperator);
         self.add_native_call(NativeCallKind::ContOperator);
-        let rep_expr = FlattenEbnfExpr::Identifier(NativeCallKind::ContOperator.to_string(), None);
-        let expr = FlattenEbnfExpr::Concat(
+        let rep_expr = EbnfExpr::Identifier(NativeCallKind::ContOperator.to_string(), None);
+        let expr = EbnfExpr::Concat(
             vec![
-                FlattenEbnfExpr::Identifier(NativeCallKind::StartOperator.to_string(), None),
-                FlattenEbnfExpr::Repetition(Box::new(rep_expr), 1),
+                EbnfExpr::Identifier(NativeCallKind::StartOperator.to_string(), None),
+                EbnfExpr::Repetition(Box::new(rep_expr), 1),
             ],
             1,
         );
 
-        let statement = FlattenEbnfExpr::Variable {
+        let statement = EbnfExpr::Variable {
             name: "operator".to_string(),
             expr: Box::new(expr),
             is_def: false,
         };
-        let operator = FlattenEbnfExpr::Statements(vec![statement], 1);
+        let operator = EbnfExpr::Statements(vec![statement], 1);
         operator.init_env(&mut self.env, &mut self.def, diagnostic);
     }
 
-    pub(crate) fn init(&mut self, expr: Option<FlattenEbnfExpr>, diagnostic: &mut Diagnostic) {
+    pub(crate) fn init(&mut self, expr: Option<EbnfExpr>, diagnostic: &mut Diagnostic) {
         self.add_identifier_env(diagnostic);
         self.add_operator_env(diagnostic);
         self.add_native_call(NativeCallKind::Integer);
