@@ -11,3 +11,66 @@ character ::= letter | digit | symbol | "_" | " " ;
 identifier = letter? , { letter | digit | "_" } ;
 
 ```
+
+//////////////////////////////// Local Scope Example /////////////////////////////////////
+```lexer(ir)
+
+digit = digit | '\u{0966}'..='\u{096F}';
+
+tensor_dims = { integer | 'x' };
+tensor ::= "Tensor", { whitespace }?, "<", whitespace?, tensor_dims, whitespace?, ">";
+
+```
+
+```ir
+    let a = Tensor<१2x32x13>
+```
+
+/* Output:
+
+Token(Newline, '\n\n', Span { start: 180, end: 182 }, len=2)
+Token(CustomCodeBlockStart('ir'), '```ir', Span { start: 182, end: 187 }, len=5)
+Token(Newline, '\n', Span { start: 187, end: 188 }, len=1)
+Token(Space, '    ', Span { start: 188, end: 192 }, len=4)
+Token(Identifier, 'let', Span { start: 192, end: 195 }, len=3)
+Token(Space, ' ', Span { start: 195, end: 196 }, len=1)
+Token(Identifier, 'a', Span { start: 196, end: 197 }, len=1)
+Token(Space, ' ', Span { start: 197, end: 198 }, len=1)
+Token(Operator, '=', Span { start: 198, end: 199 }, len=1)
+Token(Space, ' ', Span { start: 199, end: 200 }, len=1)
+Token(CustomToken('tensor'), 'Tensor<१2x32x13>', Span { start: 200, end: 218 }, len=18)
+Token(Newline, '\n', Span { start: 218, end: 219 }, len=1)
+Token(CustomCodeBlockEnd('ir'), '```', Span { start: 219, end: 222 }, len=3)
+Token(EndOfFile, '', Span { start: 222, end: 222 }, len=0)
+
+*/
+
+//////////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////// Global Scope Example /////////////////////////////////////
+```lexer
+
+digit = digit | '\u{0966}'..='\u{096F}';
+
+tensor_dims = { integer | 'x' };
+tensor ::= "Tensor", { whitespace }?, "<", whitespace?, tensor_dims, whitespace?, ">";
+
+```
+
+let a = Tensor<१2x32x13>
+
+/* Output:
+
+Token(Newline, '\n\n', Span { start: 176, end: 178 }, len=2)
+Token(Identifier, 'let', Span { start: 178, end: 181 }, len=3)
+Token(Space, ' ', Span { start: 181, end: 182 }, len=1)
+Token(Identifier, 'a', Span { start: 182, end: 183 }, len=1)
+Token(Space, ' ', Span { start: 183, end: 184 }, len=1)
+Token(Operator, '=', Span { start: 184, end: 185 }, len=1)
+Token(Space, ' ', Span { start: 185, end: 186 }, len=1)
+Token(CustomToken('tensor'), 'Tensor<१2x32x13>', Span { start: 186, end: 204 }, len=18)
+Token(EndOfFile, '', Span { start: 204, end: 204 }, len=0)
+
+*/
+
+//////////////////////////////////////////////////////////////////////////////////////////
