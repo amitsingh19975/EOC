@@ -6,4 +6,4 @@ tensor_dims = { integer | 'x' };
 tensor ::= "Tensor", { whitespace }?, "<", whitespace?, tensor_dims, whitespace?, ">";
 
 ```
-let a = Tensor  <12x32x13>
+let a = Tensor  <१2x32x13>
