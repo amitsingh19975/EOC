@@ -385,9 +385,8 @@ impl Lexer {
 
             if is_escaping {
                 match ch {
-                    'n' | 'r' | 't' | '0' | '\\' | '\'' | '"' | 'x' => {
+                    'n' | 'r' | 't' | '0' | '\\' | '\'' | '"' | 'x' | 'u' => {
                         is_escaping = false;
-                        self.next_char();
                     }
                     _ => {
                         let info = self
@@ -411,9 +410,9 @@ impl Lexer {
                             .commit();
                     }
                 }
-            } else {
-                self.next_char();
             }
+
+            self.next_char();
         }
 
         if found_format_string {
@@ -498,9 +497,8 @@ impl Lexer {
 
             if is_escaping {
                 match ch {
-                    'n' | 'r' | 't' | '0' | '\\' | '\'' | '"' | 'x' => {
+                    'n' | 'r' | 't' | '0' | '\\' | '\'' | '"' | 'x' | 'u' => {
                         is_escaping = false;
-                        self.next_char();
                     }
                     _ => {
                         let info = self
@@ -524,9 +522,9 @@ impl Lexer {
                             .commit();
                     }
                 }
-            } else {
-                self.next_char();
             }
+
+            self.next_char();
         }
 
         let span = Span::from_usize(start, end);
