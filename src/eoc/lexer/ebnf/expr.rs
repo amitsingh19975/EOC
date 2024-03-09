@@ -607,6 +607,9 @@ impl EbnfExpr {
                 while let Some(s_) =
                     v.match_expr(matcher, &s[end..], env, source_manager, diagnostic)
                 {
+                    if s_.is_empty() {
+                        break;
+                    }
                     end += s_.len();
                 }
 
