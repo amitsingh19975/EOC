@@ -349,7 +349,7 @@ impl CustomEbnfParserMatcher {
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &mut Diagnostic,
     ) -> Option<(&'b [u8], TokenKind)> {
-        for d in self.def.ordered_iter() {
+        for d in self.def.ordered_iter().rev() {
             if let Some(expr) = self.env.get(d.as_str()) {
                 let temp = self.match_expr_helper(*d, expr, s, source_manager, diagnostic);
 
