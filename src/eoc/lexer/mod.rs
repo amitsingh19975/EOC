@@ -4,9 +4,7 @@ use crate::eoc::lexer::ebnf::ast::EbnfParser;
 
 use self::{
     ebnf::{
-        ast::{RelativeSourceManager},
-        matcher::EbnfParserMatcher,
-        lexer::EbnfLexer,
+        ast::RelativeSourceManager, lexer::EbnfLexer, matcher::{EbnfParserMatcher, IREbnfParserMatcher}
     },
     token::{Token, TokenKind},
     utils::{
@@ -30,6 +28,22 @@ pub(crate) mod token;
 pub(crate) mod utils;
 pub(crate) mod number;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LexerMode {
+    Normal,
+    IR
+}
+
+impl LexerMode {
+    pub(crate) fn is_ir(&self) -> bool {
+        matches!(self, LexerMode::IR)
+    }
+    
+    pub(crate) fn is_normal(&self) -> bool {
+        matches!(self, LexerMode::Normal)
+    }
+}
+
 pub(crate) struct Lexer {
     source_manager: SourceManager,
     cursor: usize,
@@ -41,6 +55,7 @@ pub(crate) struct Lexer {
     custom_keywords_trie: Trie<u8, usize>,
     rewind_stack: Vec<usize>,
     block_lexer_matcher: HashMap<UniqueString, EbnfParserMatcher>,
+    mode: LexerMode,
 }
 
 impl Lexer {
@@ -56,6 +71,7 @@ impl Lexer {
             custom_operators_trie: Trie::new(),
             custom_keywords_trie: Trie::new(),
             block_lexer_matcher: HashMap::new(),
+            mode: LexerMode::Normal,
         }
     }
 
@@ -123,8 +139,7 @@ impl Lexer {
         }
 
         let ch = unsafe { ch.unwrap_unchecked() };
-
-        Some(match ch {
+        let temp = match ch {
             '\n' | '\r' => {
                 let span = self.skip_while(|byte| (byte == '\n') || (byte == '\r'));
                 Token::new(TokenKind::Newline, span)
@@ -142,7 +157,12 @@ impl Lexer {
                 let span = self.skip_while(|byte| byte.is_ascii_whitespace());
                 Token::new(TokenKind::Whitespace, span)
             }
-        })
+        };
+        if temp.span.is_empty() {
+            None
+        } else {
+            Some(temp)
+        }
     }
 
     fn check_balanced_paren(&mut self, until_chars: &[char]) {
@@ -184,6 +204,35 @@ impl Lexer {
         &self.custom_keywords
     }
 
+    pub(crate) fn is_ir_mode(&mut self, tokens: &mut Vec<Token>) -> bool {
+        // [fn].ir
+        self.save_cursor();
+
+        let w1 = self.skip_whitespace();
+
+        let dot_span = Span::from_usize(self.cursor, self.cursor + 1);
+        if self.peek_char() == Some('.') {
+            self.next_char();
+            let w2 = self.skip_whitespace();
+            let ir_span = Span::from_usize(self.cursor, self.cursor + 2);
+            if self.peek_char() == Some('i') {
+                self.next_char();
+                if self.peek_char() == Some('r') {
+                    self.next_char();
+                    w1.map(|t| tokens.push(t));
+                    w2.map(|t| tokens.push(t));
+
+                    tokens.push(Token::new(TokenKind::Dot, dot_span));
+                    tokens.push(Token::new(TokenKind::Identifier, ir_span));
+                    return true;
+                }
+            }
+        }
+
+        self.rewind_cursor();
+        false
+    }
+
     fn lex_identifier(&mut self, matcher: &EbnfParserMatcher, tokens: &mut Vec<Token>, should_parse_nested_operator: bool) {
         if let Some(slice) = matcher.match_identifier(
             &self.source_manager.get_source()[self.cursor..],
@@ -204,6 +253,12 @@ impl Lexer {
                 } else if kind == TokenKind::KwKeyword {
                     let new_tokens = self.lex_custom_keyword(span);
                     tokens.extend(new_tokens);
+                } else if kind == TokenKind::Fn {
+                    self.mode = if self.is_ir_mode(tokens) {
+                        LexerMode::IR
+                    } else {
+                        LexerMode::Normal
+                    };
                 }
             }
         }
@@ -1081,6 +1136,12 @@ impl Lexer {
                     loop_iterations = 0;
                 }
             }
+            
+            if self.mode.is_ir() {
+                let temp_tokens = self.lex_ir_mode(false);
+                tokens.extend(temp_tokens);
+            }
+
             let ch = self.peek_char();
 
             if ch.is_none() {
@@ -1152,6 +1213,8 @@ impl Lexer {
                     continue;
                 }
             }
+
+            last_cursor = Some(self.cursor);
 
             match ch {
                 c if self.is_valid_comment(c) => {
@@ -1229,16 +1292,19 @@ impl Lexer {
                     self.next_char();
                 }
                 ',' => {
-                    let span = self.skip_while(|c| c == ',');
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
                     tokens.push(Token::new(TokenKind::Comma, span));
+                    self.next_char();
                 }
                 ';' => {
-                    let span = self.skip_while(|c| c == ';');
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
                     tokens.push(Token::new(TokenKind::Semicolon, span));
+                    self.next_char();
                 }
                 ':' => {
-                    let span = self.skip_while(|c| c == ':');
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
                     tokens.push(Token::new(TokenKind::Colon, span));
+                    self.next_char();
                 }
                 _ if self.is_valid_operator_start(&matcher) => {
                     self.lex_operator(&matcher, &mut tokens);
@@ -1264,6 +1330,11 @@ impl Lexer {
                         break;
                     }
                 }
+                '#' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    tokens.push(Token::new(TokenKind::Hash, span));
+                    self.next_char();
+                }
                 _ => {
                     self.check_balanced_paren(&until);
                     tokens
@@ -1276,14 +1347,331 @@ impl Lexer {
                     )
                 }
             }
-
-            last_cursor = Some(self.cursor);
         }
 
         if should_check_paren {
             self.check_balanced_paren(&until);
         }
 
+        tokens
+    }
+
+    fn lex_ir_mode(&mut self, is_file: bool) -> Vec<Token> {
+        let mut tokens = Vec::new();
+        let matcher = IREbnfParserMatcher::new();
+        let old_parens = self.paren_balance.clone();
+        self.paren_balance.clear();
+
+        if !is_file {
+            tokens.push(Token::new(TokenKind::IrStart, Span::from_usize(self.cursor, self.cursor)));
+        }
+
+        loop {
+            let ch = self.peek_char();
+
+            if ch.is_none() {
+                break;
+            }
+
+            let ch = unsafe {
+                ch.unwrap_unchecked()
+            };
+
+            if ch.is_ascii_whitespace() {
+                self.skip_whitespace().map(|token| tokens.push(token));
+                continue;
+            }
+
+            let relative_manager = RelativeSourceManager::new(&self.source_manager, self.cursor as u32);
+            let source = &self.source_manager.get_source()[self.cursor..];
+
+            match ch {
+                _ if IREbnfParserMatcher::is_valid_number_start_code_point(ch) => {
+                    let start = self.cursor;
+                    if let Some((s, t)) = matcher.match_number(source, relative_manager, &mut self.diagnostics) {
+                        let end = start + s.len();
+                        let span = Span::from_usize(start, end);
+                        tokens.push(Token::new(t, span));
+                        self.cursor = end;
+                    } else {
+                        let info = self.source_manager.get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
+                        self.diagnostics
+                            .builder()
+                            .report(
+                                DiagnosticLevel::Error,
+                                "Invalid number",
+                                info,
+                                None,
+                            )
+                            .add_error(
+                                "Invalid number",
+                                Some(self.source_manager.fix_span(Span::from_usize(self.cursor, self.cursor + 1))),
+                            )
+                            .commit();
+                        self.next_char();
+                    }
+                }
+                _ if IREbnfParserMatcher::is_valid_identifier_start_code_point(ch) => {
+                    let id = matcher.match_identifier(source);
+                    if let Some(id) = id {
+                        let end = self.cursor + id.len();
+                        let span = Span::from_usize(self.cursor, end);
+                        tokens.push(Token::new(TokenKind::Identifier, span));
+                        self.cursor = end;
+                    } else {
+                        let info = self.source_manager.get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
+                        self.diagnostics
+                            .builder()
+                            .report(
+                                DiagnosticLevel::Error,
+                                "Invalid identifier",
+                                info,
+                                None,
+                            )
+                            .add_error(
+                                "Invalid identifier",
+                                Some(self.source_manager.fix_span(Span::from_usize(self.cursor, self.cursor + 1))),
+                            )
+                            .commit();
+                        self.next_char();
+                    }
+                }
+                '#' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    tokens.push(Token::new(TokenKind::Hash, span));
+                }
+                '(' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    self.paren_balance.push((TokenKind::OpenParen, span));
+                    tokens.push(Token::new(TokenKind::OpenParen, span));
+                    self.next_char();
+                }
+                ')' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    self.expect_block_or_paren(TokenKind::CloseParen);
+                    tokens.push(Token::new(TokenKind::CloseParen, span));
+                    self.next_char();
+                }
+                '{' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    self.paren_balance.push((TokenKind::OpenBrace, span));
+                    tokens.push(Token::new(TokenKind::OpenBrace, span));
+                    self.next_char();
+                }
+                '}' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    self.expect_block_or_paren(TokenKind::CloseBrace);
+                    tokens.push(Token::new(TokenKind::CloseBrace, span));
+                    self.next_char();
+                    if self.paren_balance.is_empty() && !is_file {
+                        self.mode = LexerMode::Normal;
+                        break;
+                    }
+                }
+                ':' => {
+                    let span = self.skip_while(|c| c == ':');
+                    tokens.push(Token::new(TokenKind::Colon, span));
+                }
+                '<' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    tokens.push(Token::new(TokenKind::OpenAngle, span));
+                    self.next_char();
+                    let mut level = 1;
+                    let mut span = Span::from_usize(self.cursor, self.cursor + 1);
+                    let mut last_open_angle = self.cursor;
+                    while level > 0 {
+                        let ch = self.peek_char();
+                        if ch.is_none() {
+                            let temp_span = Span::from_usize(last_open_angle, last_open_angle + 1);
+                            let info = self.source_manager.get_source_info(temp_span);
+                            let content_span = Span::from_usize(last_open_angle + 1, self.cursor);
+                            self.diagnostics
+                                .builder()
+                                .report(
+                                    DiagnosticLevel::Error,
+                                    "Unterminated angle bracket",
+                                    info,
+                                    None,
+                                )
+                                .add_error(
+                                    "Try add a matching '>' to close the angle bracket",
+                                    Some(self.source_manager.fix_span(content_span)),
+                                )
+                                .commit();
+                            break;
+                        }
+                        let ch = unsafe { ch.unwrap_unchecked() };
+                        if ch == '<' {
+                            last_open_angle = self.cursor;
+                            level += 1;
+                        } else if ch == '>' {
+                            level -= 1;
+                        }
+                        self.next_char();
+                        span.end = self.cursor as u32;
+                    }
+                    
+                    if level == 0 {
+                        span.end -= 1;
+                    }
+                    tokens.push(Token::new(TokenKind::AngleContent, span));
+                    if level == 0 {
+                        let span = Span::new(span.end, span.end + 1);
+                        tokens.push(Token::new(TokenKind::CloseAngle, span));
+                        self.next_char();
+                    }
+                }
+                '>' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    self.expect_block_or_paren(TokenKind::CloseAngle);
+                    tokens.push(Token::new(TokenKind::CloseAngle, span));
+                    self.next_char();
+                }
+                '?' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    tokens.push(Token::new(TokenKind::QuestionMark, span));
+                    self.next_char();
+                }
+                ',' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    tokens.push(Token::new(TokenKind::Comma, span));
+                    self.next_char();
+                }
+                '-' => {
+                    let start = self.cursor;
+                    self.next_char();
+                    if self.peek_char() == Some('>') {
+                        let span = Span::from_usize(start, start + 2);
+                        tokens.push(Token::new(TokenKind::Arrow, span));
+                        self.cursor += 2;
+                    } else {
+                        self.diagnostics
+                            .builder()
+                            .report(
+                                DiagnosticLevel::Error,
+                                "Invalid token",
+                                self.source_manager.get_source_info(Span::from_usize(start, start + 1)),
+                                None,
+                            )
+                            .add_error(
+                                "Invalid token",
+                                Some(self.source_manager.fix_span(Span::from_usize(start, start + 1))),
+                            )
+                            .commit();
+                    }
+                }
+                '/' => {
+                    let start = self.cursor;
+                    self.next_char();
+                    if self.peek_char() == Some('/') {
+                        self.lex_single_line_comment(&mut tokens);
+                    } else if self.peek_char() == Some('*') {
+                        self.lex_multiline_comment(&mut tokens);
+                    } else {
+                        self.diagnostics
+                            .builder()
+                            .report(
+                                DiagnosticLevel::Error,
+                                "Invalid token",
+                                self.source_manager.get_source_info(Span::from_usize(start, start + 1)),
+                                None,
+                            )
+                            .add_error(
+                                "Invalid token",
+                                Some(self.source_manager.fix_span(Span::from_usize(start, start + 1))),
+                            )
+                            .commit();
+                    }
+                }
+                '=' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    tokens.push(Token::new(TokenKind::Equal, span));
+                    self.next_char();
+                }
+                '"' => {
+                    if let Some(s) = matcher.match_string_literal(source, relative_manager, &mut self.diagnostics) {
+                        let end = self.cursor + s.len();
+                        let span = Span::from_usize(self.cursor, end);
+                        tokens.push(Token::new(TokenKind::String, span));
+                        self.cursor = end + 1;
+                    } else {
+                        let info = self.source_manager.get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
+                        self.diagnostics
+                            .builder()
+                            .report(
+                                DiagnosticLevel::Error,
+                                "Invalid string literal",
+                                info,
+                                None,
+                            )
+                            .add_error(
+                                "Invalid string literal",
+                                Some(self.source_manager.fix_span(Span::from_usize(self.cursor, self.cursor + 1))),
+                            )
+                            .commit();
+                        self.next_char();
+                    }
+                }
+                '[' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    self.paren_balance.push((TokenKind::OpenBracket, span));
+                    tokens.push(Token::new(TokenKind::OpenBracket, span));
+                    self.next_char();
+                }
+                ']' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    self.expect_block_or_paren(TokenKind::CloseBracket);
+                    tokens.push(Token::new(TokenKind::CloseBracket, span));
+                    self.next_char();
+                }
+                '\'' => {
+                    if let Some(s) = matcher.match_character_literal(source, relative_manager, &mut self.diagnostics) {
+                        let end = self.cursor + s.len();
+                        let span = Span::from_usize(self.cursor, end);
+                        tokens.push(Token::new(TokenKind::Char, span));
+                        self.cursor = end + 1;
+                    } else {
+                        let info = self.source_manager.get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
+                        self.diagnostics
+                            .builder()
+                            .report(
+                                DiagnosticLevel::Error,
+                                "Invalid character literal",
+                                info,
+                                None,
+                            )
+                            .add_error(
+                                "Invalid character literal",
+                                Some(self.source_manager.fix_span(Span::from_usize(self.cursor, self.cursor + 1))),
+                            )
+                            .commit();
+                        self.next_char();
+                    }
+                }
+                '!' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    tokens.push(Token::new(TokenKind::ExclamationMark, span));
+                    self.next_char();
+                }
+                _ => {
+                    self.check_balanced_paren(&[]);
+                    tokens
+                        .iter()
+                        .for_each(|token| println!("{}", token.to_string(&self.source_manager)));
+                    todo!(
+                        "Implement the rest of the lexer: {} | {:?}",
+                        self.cursor,
+                        ch
+                    )
+                }
+            }
+        }
+
+        if !is_file {
+            tokens.push(Token::new(TokenKind::IrEnd, Span::from_usize(self.cursor, self.cursor)));
+        }
+        self.check_balanced_paren(&[]);
+        self.paren_balance = old_parens;
         tokens
     }
 
