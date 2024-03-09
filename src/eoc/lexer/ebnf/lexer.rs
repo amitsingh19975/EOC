@@ -234,15 +234,7 @@ impl<'a> EbnfLexer<'a> {
                         }
                     } else {
                         let span = Span::from_usize(start, self.cursor);
-                        let info = self.source_manager.get_source_info(span);
-                        self.diagnostics
-                            .builder()
-                            .report(DiagnosticLevel::Error, "Unexpected character", info, None)
-                            .add_error(
-                                "Expected '..'".to_string(),
-                                Some(self.source_manager.fix_span(span)),
-                            )
-                            .commit();
+                        tokens.push(Token::new(TokenKind::Dot, span));
                     }
                 }
                 '/' => {

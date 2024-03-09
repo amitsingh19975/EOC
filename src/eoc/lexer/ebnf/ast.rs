@@ -148,6 +148,7 @@ impl<'a> EbnfParser<'a> {
                 span,
             )),
             TokenKind::Terminal => Some(self.get_terminal_from_token(&token)),
+            TokenKind::Dot => Some((EbnfExpr::AnyChar, span)),
             TokenKind::Semicolon => None,
             _ => {
                 self.diagnostic

@@ -202,6 +202,7 @@ pub(crate) enum EbnfExpr {
         rhs: char,
         inclusive: bool,
     },
+    AnyChar,
 }
 
 impl EbnfExpr {
@@ -302,6 +303,7 @@ impl EbnfExpr {
             EbnfExpr::Terminal(t) => t.len() as u8,
             EbnfExpr::Variable { expr, .. } => expr.get_max_byte_len(None),
             EbnfExpr::Range { .. } => 1,
+            EbnfExpr::AnyChar => 1,
         }
     }
 
@@ -469,6 +471,7 @@ impl EbnfExpr {
         source_manager: RelativeSourceManager<'a>,
         diagnostic: &mut Diagnostic,
     ) -> Option<&'a [u8]> {
+
         match self {
             EbnfExpr::Identifier(id, .., info) => {
                 if NativeCallKind::is_valid_name(id) {
@@ -663,9 +666,60 @@ impl EbnfExpr {
                 } else {
                     None
                 }
+            },
+            EbnfExpr::AnyChar => {
+                if s.is_empty() {
+                    return None;
+                }
+                if let Some(c) = ByteToCharIter::new(s).next() {
+                    if &s[0..3.min(s.len())] == b"```" {
+                        return None;
+                    }
+
+                    let len = c.len_utf8();
+                    Some(&s[..len])
+                } else {
+                    None
+                }
             }
         }
     }
+
+    // pub(crate) fn has_any_as_child(&self) -> bool {
+    //     match self {
+    //         EbnfExpr::Statements(exprs, ..) |
+    //         EbnfExpr::Alternative(exprs, _, ..) |
+    //         EbnfExpr::Concat(exprs, ..) |
+    //         EbnfExpr::Exception(exprs, ..) |
+    //         EbnfExpr::Extend(exprs, ..) => {
+    //             for expr in exprs.iter() {
+    //                 match expr {
+    //                     EbnfExpr::AnyChar => return true,
+    //                     _ => if expr.has_any_as_child() {
+    //                         return true;
+    //                     }
+    //                 }
+    //             }
+    //             false
+    //         }
+    //         EbnfExpr::AnyChar => true,
+    //         _ => false,
+    //     }
+    // }
+
+    // pub(crate) fn number_of_children(&self) -> usize {
+    //     match self {
+    //         EbnfExpr::Statements(exprs, ..) |
+    //         EbnfExpr::Alternative(exprs, _, ..) |
+    //         EbnfExpr::Concat(exprs, ..) |
+    //         EbnfExpr::Exception(exprs, ..) |
+    //         EbnfExpr::Extend(exprs, ..) => exprs.len(),
+    //         EbnfExpr::Optional(expr, ..) |
+    //         EbnfExpr::Repetition(expr, ..) |
+    //         EbnfExpr::Variable { expr, .. } => expr.number_of_children(),
+    //         _ => 0,
+    //     }
+    // }
 
     pub(crate) fn is_empty(&self) -> bool {
         match self {
@@ -769,7 +823,8 @@ impl Display for EbnfExpr {
                     write!(f, " .. ")?;
                 }
                 write!(f, "{}", rhs)
-            }
+            },
+            EbnfExpr::AnyChar => write!(f, "."),
         }
     }
 }
