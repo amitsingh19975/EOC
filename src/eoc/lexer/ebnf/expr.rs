@@ -430,7 +430,10 @@ impl EbnfExpr {
                 let max_byte_len = l_max.max(r_max);
                 match op {
                     BinaryOperator::Alternative => {
-                        Self::Alternative(vec![lhs, rhs], HashSet::new(), max_byte_len)
+                        let mut set = HashSet::new();
+                        let mut items = vec![lhs, rhs];
+                        Self::try_move_terminals_to_hash_set(&mut items, &mut set);
+                        Self::Alternative(items, set, max_byte_len)
                     }
                     BinaryOperator::Concat => Self::Concat(vec![lhs, rhs], max_byte_len),
                     BinaryOperator::Exception => Self::Exception(vec![lhs, rhs], max_byte_len),
