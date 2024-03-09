@@ -74,3 +74,43 @@ Token(EndOfFile, '', Span { start: 204, end: 204 }, len=0)
 */
 
 //////////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////// IR Example /////////////////////////////////////
+
+```lexer(ir)
+
+digit = '0'..='9';
+hex_digit = '0'..='9' | 'a'..='f' | 'A'..='F';
+letter = 'a'..='z' | 'A'..='Z';
+id_punct = '$' | '.' | '_' | '-';
+
+decimal_literal = { digit };
+hexadecimal_literal = '0x', { hex_digit };
+integer_literal ::= decimal_literal | hexadecimal_literal;
+
+float_literal ::= ['-' | '+'], { digit }, '.', { digit }, (['e' | 'E'], ['-' | '+'], { digit })?;
+
+bare_id ::= ( letter | '_'? ), { letter | digit | ['_' | '$' | '.'] }?;
+
+suffix_id = { digit } | (( letter | id_punct ), { letter | id_punct | digit }?);
+value_id ::= '%', suffix_id;
+
+escaped_char = '\', ['a' | 'b' | 'f' | 'n' | 'r' | 't' | 'v' | '"' | "'"];
+any_unicode_character = (. - '\') | escaped_char;
+string_literal ::= '"', { any_unicode_character - '"' }, '"';
+character_literal ::= "'", (any_unicode_character - "'"), "'"; 
+
+symbol_ref_id ::= '@', (suffix_id | string_literal), ('::', symbol_ref_id)?;
+value_use ::= value_id, ('#', decimal_literal)?;
+
+caret_id ::= '^', suffix_id;
+
+```
+
+```ir
+
+^12
+
+```
+
+/////////////////////////////////////////////////////////////////////////////////
