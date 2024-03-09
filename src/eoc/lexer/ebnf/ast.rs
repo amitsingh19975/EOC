@@ -467,12 +467,12 @@ impl EbnfParserMatcherEnv {
     }
 
     pub(super) fn contains(&self, name: &str) -> bool {
-        self.hash.contains_key(name) || match name {
+         match name {
             "identifier" => self.identifiers.is_some(),
             "operator" => self.operators.is_some(),
             "integer" => self.integer.is_some(),
             "floating_point" => self.floating_point.is_some(),
-            _ => false,
+            _ => self.hash.contains_key(name),
         }
     }
 
