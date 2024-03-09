@@ -102,6 +102,17 @@ pub(crate) enum TokenKind {
 
     // ========= End Ebnf ==========
 
+    // ============ IR Tokens ============
+    OpenAngle, // <
+    CloseAngle, // >
+    IrStart,
+    IrEnd,
+    AngleContent,
+    ExclamationMark,
+    
+
+    // ====================================
+
     CustomCodeBlockStart(UniqueString),
     CustomCodeBlockEnd(UniqueString),
     CustomToken(UniqueString),
