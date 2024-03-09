@@ -296,8 +296,8 @@ impl CustomEbnfParserMatcher {
         diagnostic: &mut Diagnostic,
     ) -> Option<(&'b [u8], TokenKind)> {
         let key = symbol.as_str();
-        match key {
-            _ if key == self.identifier_sym.as_str() => {
+        match symbol {
+            u_str if u_str == self.identifier_sym => {
                 let temp = if !self.contains_def(key) {
                     self.match_native_identifier(s, source_manager, diagnostic)
                         .map(|s| (s, TokenKind::Identifier))
@@ -307,7 +307,7 @@ impl CustomEbnfParserMatcher {
                 };
                 temp
             }
-            _ if key == self.operator_sym.as_str() => {
+            u_str if u_str == self.operator_sym => {
                 let temp = if !self.contains_def(key) {
                     self.match_native_operator(s, source_manager, diagnostic)
                         .map(|s| (s, TokenKind::Operator))
@@ -317,7 +317,7 @@ impl CustomEbnfParserMatcher {
                 };
                 temp
             }
-            _ if key == self.fp_sym.as_str() => {
+            u_str if u_str == self.fp_sym => {
                 let temp = if !self.contains_def(key) {
                     self.match_native_floating_point(s, source_manager, diagnostic)
                         .map(|s| (s, TokenKind::FloatingPoint))
@@ -327,7 +327,7 @@ impl CustomEbnfParserMatcher {
                 };
                 temp
             }
-            _ if key == self.integer_sym.as_str() => {
+            u_str if u_str == self.integer_sym => {
                 let temp = if !self.contains_def(key) {
                     self.match_native_integer(s, source_manager, diagnostic)
                         .map(|s| (s, TokenKind::Integer))
