@@ -7,7 +7,7 @@ lazy_static! {
     static ref STRING_INTERNER: RwLock<HashSet<&'static str>> = RwLock::new(HashSet::new());
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Debug, Eq, Hash, Clone, Copy)]
 pub(crate) struct UniqueString(&'static str);
 
 impl Display for UniqueString {
@@ -17,10 +17,18 @@ impl Display for UniqueString {
 }
 
 impl UniqueString {
-    pub(crate) fn new<S: AsRef<str>>(s: S) -> Self {
+    pub(crate) fn try_new<S: AsRef<str>>(s: S) -> Option<Self> {
         let c_str = Self::get(s.as_ref());
         if let Some(c_str) = c_str {
-            return Self(c_str)
+            Some(Self(c_str))
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn new<S: AsRef<str>>(s: S) -> Self {
+        if let Some(n) = Self::try_new(s.as_ref()) {
+            return n;
         }
 
         let mut writer = STRING_INTERNER.write().unwrap();
@@ -35,6 +43,49 @@ impl UniqueString {
     }
 
     pub(crate) fn as_str(&self) -> &'static str {
+        self.0
+    }
+}
+
+
+impl PartialEq for UniqueString {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.0, other.0)
+    }
+}
+
+impl PartialEq<UniqueString> for str {
+    fn eq(&self, other: &UniqueString) -> bool {
+        self == other.0
+    }
+}
+
+impl PartialEq<&str> for UniqueString {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<UniqueString> for &str {
+    fn eq(&self, other: &UniqueString) -> bool {
+        *self == other.0
+    }
+}
+
+impl PartialEq<String> for UniqueString {
+    fn eq(&self, other: &String) -> bool {
+        self.0 == other
+    }
+}
+
+impl PartialEq<UniqueString> for String {
+    fn eq(&self, other: &UniqueString) -> bool {
+        self == other.0
+    }
+}
+
+impl AsRef<str> for UniqueString {
+    fn as_ref(&self) -> &str {
         self.0
     }
 }
