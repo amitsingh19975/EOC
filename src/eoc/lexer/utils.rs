@@ -99,6 +99,8 @@ impl ParenMatching {
             TokenKind::OpenBrace => Some(TokenKind::CloseBrace),
             TokenKind::CloseBrace => Some(TokenKind::OpenBrace),
             TokenKind::TripleBackTick => Some(TokenKind::TripleBackTick),
+            TokenKind::OpenAngle => Some(TokenKind::CloseAngle),
+            TokenKind::CloseAngle => Some(TokenKind::OpenAngle),
             _ => None,
         }
     }
@@ -124,6 +126,8 @@ impl ParenMatching {
             TokenKind::CloseBracket => "]",
             TokenKind::OpenBrace => "{",
             TokenKind::CloseBrace => "}",
+            TokenKind::OpenAngle => "<",
+            TokenKind::CloseAngle => ">",
             TokenKind::TripleBackTick => "```",
             _ => "",
         }
@@ -136,6 +140,7 @@ impl ParenMatching {
             TokenKind::OpenDoubleBrace | TokenKind::CloseDoubleBrace => "double braces".to_owned(),
             TokenKind::OpenBrace | TokenKind::CloseBrace => "braces".to_owned(),
             TokenKind::TripleBackTick => "code block".to_owned(),
+            TokenKind::OpenAngle | TokenKind::CloseAngle => "angle brackets".to_owned(),
             _ => "".to_owned(),
         }
     }
