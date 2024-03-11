@@ -8,22 +8,152 @@ use crate::eoc::{
             is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point,
         },
     },
-    utils::{diagnostic::{Diagnostic, DiagnosticReporter}, span::Span, string::UniqueString},
+    utils::{
+        diagnostic::{Diagnostic, DiagnosticReporter},
+        span::Span,
+        string::UniqueString,
+    },
 };
 
 use super::{
     ast::{EbnfParserMatcherDef, EbnfParserMatcherEnv, RelativeSourceManager},
     expr::{EbnfExpr, EbnfParserEnvVariable},
-    native_call::NativeCallKind,
+    native_call::{NativeCallKind, NATIVE_CALL_KIND_ID},
 };
+
+pub(crate) trait EbnfMatcher {
+    fn is_digit<'b>(
+        &self,
+        s: &'b [u8],
+        _source_manager: RelativeSourceManager<'b>,
+        _diagnostics: &mut Diagnostic,
+    ) -> Option<char> {
+        ByteToCharIter::new(s).next().filter(|c| c.is_ascii_digit())
+    }
+
+    fn is_hex_digit<'b>(
+        &self,
+        s: &'b [u8],
+        _source_manager: RelativeSourceManager<'b>,
+        _diagnostics: &mut Diagnostic,
+    ) -> Option<char> {
+        ByteToCharIter::new(s)
+            .next()
+            .filter(|c| c.is_ascii_hexdigit())
+    }
+
+    fn is_oct_digit<'b>(
+        &self,
+        s: &'b [u8],
+        _source_manager: RelativeSourceManager<'b>,
+        _diagnostics: &mut Diagnostic,
+    ) -> Option<char> {
+        ByteToCharIter::new(s)
+            .next()
+            .filter(|c| c.is_ascii_digit() && *c < '8')
+    }
+
+    fn is_binary_digit<'b>(
+        &self,
+        s: &'b [u8],
+        _source_manager: RelativeSourceManager<'b>,
+        _diagnostics: &mut Diagnostic,
+    ) -> Option<char> {
+        ByteToCharIter::new(s)
+            .next()
+            .filter(|c| *c == '0' || *c == '1')
+    }
+
+    fn contains_def(&self, name: &str) -> bool {
+        false
+    }
+
+    fn match_native_integer<'b>(
+        &self,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        parse_integer(
+            s,
+            |s, sm, d| self.is_digit(s, sm, d),
+            |s, sm, d| self.is_hex_digit(s, sm, d),
+            |s, sm, d| self.is_oct_digit(s, sm, d),
+            |s, sm, d| self.is_binary_digit(s, sm, d),
+            source_manager,
+            diagnostic,
+        )
+    }
+
+    fn match_native_floating_point<'b>(
+        &self,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        parse_floating_point(
+            s,
+            |s, sm, d| self.is_digit(s, sm, d),
+            |s, sm, d| self.is_hex_digit(s, sm, d),
+            source_manager,
+            diagnostic,
+        )
+    }
+
+    fn match_operator<'b>(
+        &self,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]>;
+
+    fn match_native<'b>(
+        &self,
+        kind: NativeCallKind,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]>;
+
+    fn match_expr_for<'a>(
+        &self,
+        var: &str,
+        s: &'a [u8],
+        source_manager: RelativeSourceManager<'a>,
+        diagnostics: &mut Diagnostic,
+    ) -> Option<&'a [u8]>;
+
+    fn try_match_expr<'b>(
+        &self,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<(&'b [u8], TokenKind)>;
+
+    fn has_custom_digit_lexing(&self) -> bool {
+        self.contains_def(NATIVE_CALL_KIND_ID.is_hex_digit.as_str())
+            || self.contains_def(NATIVE_CALL_KIND_ID.is_oct_digit.as_str())
+            || self.contains_def(NATIVE_CALL_KIND_ID.is_oct_digit.as_str())
+            || self.contains_def(NATIVE_CALL_KIND_ID.is_binary_digit.as_str())
+    }
+
+    fn has_custom_integer_lexing(&self) -> bool {
+        self.contains_def(NATIVE_CALL_KIND_ID.integer_sym.as_str())
+            || self.has_custom_digit_lexing()
+    }
+
+    fn has_custom_floating_point_lexing(&self) -> bool {
+        self.contains_def(NATIVE_CALL_KIND_ID.fp_sym.as_str()) || self.has_custom_integer_lexing()
+    }
+
+    fn has_custom_identifier_lexing(&self) -> bool {
+        self.contains_def(NATIVE_CALL_KIND_ID.identifier_sym.as_str())
+    }
+}
 
 pub(crate) struct CustomEbnfParserMatcher {
     env: EbnfParserMatcherEnv,
     def: EbnfParserMatcherDef,
-    identifier_sym: UniqueString,
-    operator_sym: UniqueString,
-    integer_sym: UniqueString,
-    fp_sym: UniqueString,
 }
 
 impl CustomEbnfParserMatcher {
@@ -31,10 +161,6 @@ impl CustomEbnfParserMatcher {
         Self {
             env: EbnfParserMatcherEnv::new(),
             def: EbnfParserMatcherDef::new(),
-            identifier_sym: UniqueString::new("identifier"),
-            operator_sym: UniqueString::new("operator"),
-            integer_sym: UniqueString::new("integer"),
-            fp_sym: UniqueString::new("floating_point"),
         }
     }
 
@@ -80,7 +206,12 @@ impl CustomEbnfParserMatcher {
         operator.init_env(&mut self.env, &mut self.def, diagnostic);
     }
 
-    pub(crate) fn init(&mut self, expr: Option<EbnfExpr>, diagnostic: &mut Diagnostic) {
+    pub(crate) fn init<'b>(
+        &mut self,
+        expr: EbnfExpr,
+        _source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) {
         self.add_identifier_env(diagnostic);
         self.add_operator_env(diagnostic);
         self.add_native_call(NativeCallKind::Integer);
@@ -99,9 +230,7 @@ impl CustomEbnfParserMatcher {
         self.add_native_call(NativeCallKind::StartOperator);
         self.add_native_call(NativeCallKind::ContOperator);
 
-        if let Some(expr) = expr {
-            expr.init_env(&mut self.env, &mut self.def, diagnostic);
-        }
+        expr.init_env(&mut self.env, &mut self.def, diagnostic);
         let keys = self.env.keys();
         for key in keys {
             if let Some(e) = self.env.remove(&key) {
@@ -125,10 +254,6 @@ impl CustomEbnfParserMatcher {
     fn add_native_call(&mut self, kind: NativeCallKind) {
         self.env
             .insert(kind.to_string(), EbnfParserEnvVariable::NativeCall(kind));
-    }
-
-    pub(crate) fn contains_def(&self, name: &str) -> bool {
-        self.def.contains(name)
     }
 
     pub(crate) fn match_native_identifier<'b>(
@@ -172,82 +297,6 @@ impl CustomEbnfParserMatcher {
         }
 
         Some(&s[..i])
-    }
-
-    fn get_digit<'b>(
-        &self,
-        s: &[u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<char> {
-        self.match_native(NativeCallKind::Digit, s, source_manager, diagnostic)
-            .map(|s| ByteToCharIter::new(s).next())
-            .flatten()
-    }
-
-    fn get_hex_digit<'b>(
-        &self,
-        s: &[u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<char> {
-        self.match_native(NativeCallKind::HexDigit, s, source_manager, diagnostic)
-            .map(|s| ByteToCharIter::new(s).next())
-            .flatten()
-    }
-
-    fn get_oct_digit<'b>(
-        &self,
-        s: &[u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<char> {
-        self.match_native(NativeCallKind::OctDigit, s, source_manager, diagnostic)
-            .map(|s| ByteToCharIter::new(s).next())
-            .flatten()
-    }
-
-    fn get_binary_digit<'b>(
-        &self,
-        s: &[u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<char> {
-        self.match_native(NativeCallKind::BinDigit, s, source_manager, diagnostic)
-            .map(|s| ByteToCharIter::new(s).next())
-            .flatten()
-    }
-
-    pub(crate) fn match_native_integer<'b>(
-        &self,
-        s: &'b [u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<&'b [u8]> {
-        parse_integer(
-            s,
-            |s, sm, d| self.get_digit(s, sm, d),
-            |s, sm, d| self.get_hex_digit(s, sm, d),
-            |s, sm, d| self.get_oct_digit(s, sm, d),
-            |s, sm, d| self.get_binary_digit(s, sm, d),
-            source_manager,
-            diagnostic,
-        )
-    }
-
-    pub(crate) fn match_native_floating_point<'b>(
-        &self,
-        s: &'b [u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<&'b [u8]> {
-        parse_floating_point(
-            s,
-            |s, sm, d| self.get_digit(s, sm, d),
-            |s, sm, d| self.get_hex_digit(s, sm, d),
-            source_manager,
-            diagnostic,
-        )
     }
 
     pub(crate) fn match_native_operator<'b>(
@@ -297,7 +346,7 @@ impl CustomEbnfParserMatcher {
     ) -> Option<(&'b [u8], TokenKind)> {
         let key = symbol.as_str();
         match symbol {
-            u_str if u_str == self.identifier_sym => {
+            u_str if u_str == NATIVE_CALL_KIND_ID.identifier_sym => {
                 let temp = if !self.contains_def(key) {
                     self.match_native_identifier(s, source_manager, diagnostic)
                         .map(|s| (s, TokenKind::Identifier))
@@ -307,7 +356,7 @@ impl CustomEbnfParserMatcher {
                 };
                 temp
             }
-            u_str if u_str == self.operator_sym => {
+            u_str if u_str == NATIVE_CALL_KIND_ID.operator_sym => {
                 let temp = if !self.contains_def(key) {
                     self.match_native_operator(s, source_manager, diagnostic)
                         .map(|s| (s, TokenKind::Operator))
@@ -317,7 +366,7 @@ impl CustomEbnfParserMatcher {
                 };
                 temp
             }
-            u_str if u_str == self.fp_sym => {
+            u_str if u_str == NATIVE_CALL_KIND_ID.fp_sym => {
                 let temp = if !self.contains_def(key) {
                     self.match_native_floating_point(s, source_manager, diagnostic)
                         .map(|s| (s, TokenKind::FloatingPoint))
@@ -327,7 +376,7 @@ impl CustomEbnfParserMatcher {
                 };
                 temp
             }
-            u_str if u_str == self.integer_sym => {
+            u_str if u_str == NATIVE_CALL_KIND_ID.integer_sym => {
                 let temp = if !self.contains_def(key) {
                     self.match_native_integer(s, source_manager, diagnostic)
                         .map(|s| (s, TokenKind::Integer))
@@ -343,7 +392,88 @@ impl CustomEbnfParserMatcher {
         }
     }
 
-    pub(crate) fn try_match_expr<'b>(
+    pub(crate) fn match_identifier<'b>(
+        &self,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        if let Some(expr) = self.env.get(NATIVE_CALL_KIND_ID.identifier_sym.as_str()) {
+            self.match_expr_helper(
+                NATIVE_CALL_KIND_ID.identifier_sym,
+                expr,
+                s,
+                source_manager,
+                diagnostic,
+            )
+            .map(|(s, _)| s)
+        } else {
+            self.match_native_identifier(s, source_manager, diagnostic)
+        }
+    }
+
+    pub(crate) fn try_match_native_if_exists<'b>(
+        &self,
+        kind: NativeCallKind,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        self.match_expr_for(kind.as_str(), s, source_manager, diagnostic)
+    }
+}
+
+impl EbnfMatcher for CustomEbnfParserMatcher {
+    fn match_operator<'b>(
+        &self,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        if let Some(expr) = self.env.get(NATIVE_CALL_KIND_ID.operator_sym.as_str()) {
+            self.match_expr_helper(
+                NATIVE_CALL_KIND_ID.operator_sym,
+                expr,
+                s,
+                source_manager,
+                diagnostic,
+            )
+            .map(|(s, _)| s)
+        } else {
+            self.match_native_operator(s, source_manager, diagnostic)
+        }
+    }
+
+    fn match_native<'b>(
+        &self,
+        kind: NativeCallKind,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        if let Some(expr) = self.env.get(kind.as_str()) {
+            expr.match_expr(self, s, &self.env, source_manager, diagnostic)
+        } else {
+            kind.call(self, s, source_manager, diagnostic)
+        }
+    }
+
+    fn match_expr_for<'a>(
+        &self,
+        var: &str,
+        s: &'a [u8],
+        source_manager: RelativeSourceManager<'a>,
+        diagnostics: &mut Diagnostic,
+    ) -> Option<&'a [u8]> {
+        if let Some(expr) = self.env.get(var) {
+            let temp = expr.match_expr(self, s, &self.env, source_manager, diagnostics);
+            temp
+        } else {
+            None
+        }
+    }
+
+    fn try_match_expr<'b>(
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
@@ -361,89 +491,52 @@ impl CustomEbnfParserMatcher {
         None
     }
 
-    pub(crate) fn match_expr_for<'b>(
+    fn is_digit<'b>(
         &self,
-        var: &str,
-        s: &'b [u8],
+        s: &[u8],
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &mut Diagnostic,
-    ) -> Option<&'b [u8]> {
-        if let Some(expr) = self.env.get(var) {
-            let temp = expr.match_expr(self, s, &self.env, source_manager, diagnostic);
-            temp
-        } else {
-            None
-        }
+    ) -> Option<char> {
+        self.match_native(NativeCallKind::Digit, s, source_manager, diagnostic)
+            .map(|s| ByteToCharIter::new(s).next())
+            .flatten()
     }
 
-    pub(crate) fn match_identifier<'b>(
+    fn is_hex_digit<'b>(
         &self,
-        s: &'b [u8],
+        s: &[u8],
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &mut Diagnostic,
-    ) -> Option<&'b [u8]> {
-        if let Some(expr) = self.env.get(self.identifier_sym.as_str()) {
-            self.match_expr_helper(self.identifier_sym, expr, s, source_manager, diagnostic)
-                .map(|(s, _)| s)
-        } else {
-            self.match_native_identifier(s, source_manager, diagnostic)
-        }
+    ) -> Option<char> {
+        self.match_native(NativeCallKind::HexDigit, s, source_manager, diagnostic)
+            .map(|s| ByteToCharIter::new(s).next())
+            .flatten()
     }
 
-    pub(crate) fn match_operator<'b>(
+    fn is_oct_digit<'b>(
         &self,
-        s: &'b [u8],
+        s: &[u8],
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &mut Diagnostic,
-    ) -> Option<&'b [u8]> {
-        if let Some(expr) = self.env.get(self.operator_sym.as_str()) {
-            self.match_expr_helper(self.operator_sym, expr, s, source_manager, diagnostic)
-                .map(|(s, _)| s)
-        } else {
-            self.match_native_operator(s, source_manager, diagnostic)
-        }
+    ) -> Option<char> {
+        self.match_native(NativeCallKind::OctDigit, s, source_manager, diagnostic)
+            .map(|s| ByteToCharIter::new(s).next())
+            .flatten()
     }
 
-    pub(crate) fn try_match_native_if_exists<'b>(
+    fn is_binary_digit<'b>(
         &self,
-        kind: NativeCallKind,
-        s: &'b [u8],
+        s: &[u8],
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &mut Diagnostic,
-    ) -> Option<&'b [u8]> {
-        self.match_expr_for(kind.as_str(), s, source_manager, diagnostic)
+    ) -> Option<char> {
+        self.match_native(NativeCallKind::BinDigit, s, source_manager, diagnostic)
+            .map(|s| ByteToCharIter::new(s).next())
+            .flatten()
     }
 
-    pub(crate) fn match_native<'b>(
-        &self,
-        kind: NativeCallKind,
-        s: &'b [u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<&'b [u8]> {
-        if let Some(expr) = self.env.get(kind.as_str()) {
-            expr.match_expr(self, s, &self.env, source_manager, diagnostic)
-        } else {
-            kind.call(self, s, source_manager, diagnostic)
-        }
-    }
-
-    pub(crate) fn has_custom_digit_lexing(&self) -> bool {
-        self.contains_def("hex_digit")
-            || self.contains_def("oct_digit")
-            || self.contains_def("bin_digit")
-    }
-
-    pub(crate) fn has_custom_integer_lexing(&self) -> bool {
-        self.contains_def(self.integer_sym.as_str()) || self.has_custom_digit_lexing()
-    }
-
-    pub(crate) fn has_custom_floating_point_lexing(&self) -> bool {
-        self.contains_def(self.fp_sym.as_str()) || self.has_custom_integer_lexing()
-    }
-
-    pub(crate) fn has_custom_identifier_lexing(&self) -> bool {
-        self.contains_def(self.identifier_sym.as_str())
+    fn contains_def(&self, name: &str) -> bool {
+        self.def.contains(name)
     }
 }
 
@@ -509,118 +602,6 @@ impl DefaultEbnfParserMatcher {
         Some(&s[..i])
     }
 
-    fn get_digit<'b>(
-        &self,
-        s: &[u8],
-        _source_manager: RelativeSourceManager<'b>,
-        _diagnostic: &mut Diagnostic,
-    ) -> Option<char> {
-        if let Some((is_valid, c)) = ByteToCharIter::new(s)
-            .next()
-            .map(|c| (c.is_ascii_digit(), c))
-        {
-            if is_valid {
-                Some(c)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-
-    fn get_hex_digit<'b>(
-        &self,
-        s: &[u8],
-        _source_manager: RelativeSourceManager<'b>,
-        _diagnostic: &mut Diagnostic,
-    ) -> Option<char> {
-        if let Some((is_valid, c)) = ByteToCharIter::new(s)
-            .next()
-            .map(|c| (c.is_ascii_hexdigit(), c))
-        {
-            if is_valid {
-                Some(c)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-
-    fn get_oct_digit<'b>(
-        &self,
-        s: &[u8],
-        _source_manager: RelativeSourceManager<'b>,
-        _diagnostic: &mut Diagnostic,
-    ) -> Option<char> {
-        if let Some((is_valid, c)) = ByteToCharIter::new(s)
-            .next()
-            .map(|c| (c.is_ascii_digit() && c < '8', c))
-        {
-            if is_valid {
-                Some(c)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-
-    fn get_binary_digit<'b>(
-        &self,
-        s: &[u8],
-        _source_manager: RelativeSourceManager<'b>,
-        _diagnostic: &mut Diagnostic,
-    ) -> Option<char> {
-        if let Some((is_valid, c)) = ByteToCharIter::new(s)
-            .next()
-            .map(|c| (c == '0' || c == '1', c))
-        {
-            if is_valid {
-                Some(c)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn match_native_integer<'b>(
-        &self,
-        s: &'b [u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<&'b [u8]> {
-        parse_integer(
-            s,
-            |s, sm, d| self.get_digit(s, sm, d),
-            |s, sm, d| self.get_hex_digit(s, sm, d),
-            |s, sm, d| self.get_oct_digit(s, sm, d),
-            |s, sm, d| self.get_binary_digit(s, sm, d),
-            source_manager,
-            diagnostic,
-        )
-    }
-
-    pub(crate) fn match_native_floating_point<'b>(
-        &self,
-        s: &'b [u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<&'b [u8]> {
-        parse_floating_point(
-            s,
-            |s, sm, d| self.get_digit(s, sm, d),
-            |s, sm, d| self.get_hex_digit(s, sm, d),
-            source_manager,
-            diagnostic,
-        )
-    }
-
     fn match_native_operator<'b>(
         &self,
         s: &'b [u8],
@@ -659,22 +640,6 @@ impl DefaultEbnfParserMatcher {
         Some(&s[..i])
     }
 
-    pub(crate) fn match_expr_for<'b>(
-        &self,
-        var: &str,
-        s: &'b [u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<&'b [u8]> {
-        match var {
-            "identifier" => self.match_native_identifier(s, source_manager, diagnostic),
-            "operator" => self.match_native_operator(s, source_manager, diagnostic),
-            "floating_point" => self.match_native_floating_point(s, source_manager, diagnostic),
-            "integer" => self.match_native_integer(s, source_manager, diagnostic),
-            _ => None,
-        }
-    }
-
     pub(crate) fn match_identifier<'b>(
         &self,
         s: &'b [u8],
@@ -683,8 +648,10 @@ impl DefaultEbnfParserMatcher {
     ) -> Option<&'b [u8]> {
         self.match_native_identifier(s, source_manager, diagnostic)
     }
+}
 
-    pub(crate) fn match_operator<'b>(
+impl EbnfMatcher for DefaultEbnfParserMatcher {
+    fn match_operator<'b>(
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
@@ -693,7 +660,7 @@ impl DefaultEbnfParserMatcher {
         self.match_native_operator(s, source_manager, diagnostic)
     }
 
-    pub(crate) fn match_native<'b>(
+    fn match_native<'b>(
         &self,
         kind: NativeCallKind,
         s: &'b [u8],
@@ -708,39 +675,71 @@ impl DefaultEbnfParserMatcher {
         )
     }
 
-    pub(crate) fn has_custom_digit_lexing(&self) -> bool {
-        false
+    fn match_expr_for<'a>(
+        &self,
+        var: &str,
+        s: &'a [u8],
+        source_manager: RelativeSourceManager<'a>,
+        diagnostics: &mut Diagnostic,
+    ) -> Option<&'a [u8]> {
+        match var {
+            _ if var == NATIVE_CALL_KIND_ID.identifier_sym => {
+                self.match_native_identifier(s, source_manager, diagnostics)
+            }
+            _ if var == NATIVE_CALL_KIND_ID.operator_sym => {
+                self.match_native_operator(s, source_manager, diagnostics)
+            }
+            _ if var == NATIVE_CALL_KIND_ID.fp_sym => {
+                self.match_native_floating_point(s, source_manager, diagnostics)
+            }
+            _ if var == NATIVE_CALL_KIND_ID.integer_sym => {
+                self.match_native_integer(s, source_manager, diagnostics)
+            }
+            _ => None,
+        }
     }
 
-    pub(crate) fn has_custom_integer_lexing(&self) -> bool {
-        false
-    }
-
-    pub(crate) fn has_custom_floating_point_lexing(&self) -> bool {
-        false
-    }
-
-    pub(crate) fn has_custom_identifier_lexing(&self) -> bool {
-        false
+    fn try_match_expr<'b>(
+        &self,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<(&'b [u8], TokenKind)> {
+        for k in &[
+            NATIVE_CALL_KIND_ID.identifier_sym,
+            NATIVE_CALL_KIND_ID.operator_sym,
+            NATIVE_CALL_KIND_ID.fp_sym,
+            NATIVE_CALL_KIND_ID.integer_sym,
+        ] {
+            if let Some(s) = self.match_expr_for(k.as_str(), s, source_manager, diagnostic) {
+                return Some((s, TokenKind::CustomToken(*k)));
+            }
+        }
+        None
     }
 }
 
 pub(crate) enum EbnfParserMatcher {
     Custom(CustomEbnfParserMatcher),
-    Default(DefaultEbnfParserMatcher),   
+    Default(DefaultEbnfParserMatcher),
 }
 
 impl EbnfParserMatcher {
-    pub(crate) fn init(&mut self, expr: Option<EbnfExpr>, diagnostic: &mut Diagnostic) {
+    pub(crate) fn init<'b>(
+        &mut self,
+        expr: Option<EbnfExpr>,
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) {
         if let Some(expr) = expr {
             if expr.is_empty() {
-                return;   
+                return;
             }
             match self {
-                Self::Custom(m) => m.init(Some(expr), diagnostic),
+                Self::Custom(m) => m.init(expr, source_manager, diagnostic),
                 Self::Default(_) => {
                     let mut m = CustomEbnfParserMatcher::new();
-                    m.init(Some(expr), diagnostic);
+                    m.init(expr, source_manager, diagnostic);
                     *self = Self::Custom(m);
                 }
             }
@@ -870,10 +869,10 @@ impl IREbnfParserMatcher {
 
     pub(crate) fn is_valid_identifier_start_code_point(c: char) -> bool {
         // Identifiers
-            // bare-id ::= (letter|[_]) (letter|digit|[_$.])*
-            // suffix-id ::= (digit+ | ((letter|id-punct) (letter|id-punct|digit)*))
-            // value-id ::= `%` suffix-id
-            // id-punct  ::= [$._-]
+        // bare-id ::= (letter|[_]) (letter|digit|[_$.])*
+        // suffix-id ::= (digit+ | ((letter|id-punct) (letter|id-punct|digit)*))
+        // value-id ::= `%` suffix-id
+        // id-punct  ::= [$._-]
 
         match c {
             'a'..='z' | 'A'..='Z' | '_' | '%' | '@' => true,
@@ -888,11 +887,7 @@ impl IREbnfParserMatcher {
         }
     }
 
-    pub(crate) fn match_identifier<'b>(
-        &self,
-        s: &'b [u8]
-    ) -> Option<&'b [u8]> {
-
+    pub(crate) fn match_identifier<'b>(&self, s: &'b [u8]) -> Option<&'b [u8]> {
         if s.is_empty() {
             return None;
         }
@@ -980,7 +975,7 @@ impl IREbnfParserMatcher {
                 break;
             }
             let c = c.unwrap();
-            
+
             if c == '\\' {
                 is_escaping = !is_escaping;
             } else {
@@ -994,8 +989,14 @@ impl IREbnfParserMatcher {
                         _ => {
                             let span = Span::from_usize(i, i + c.len_utf8());
                             let info = source_manager.get_source_info(span);
-                            diagnostic.builder()
-                                .report(crate::eoc::utils::diagnostic::DiagnosticLevel::Error, "Invalid escape sequence", info, None)
+                            diagnostic
+                                .builder()
+                                .report(
+                                    crate::eoc::utils::diagnostic::DiagnosticLevel::Error,
+                                    "Invalid escape sequence",
+                                    info,
+                                    None,
+                                )
                                 .add_error("Invalid escape sequence", Some(span))
                                 .commit();
                             return None;
@@ -1009,9 +1010,18 @@ impl IREbnfParserMatcher {
         }
 
         let info = source_manager.get_source_info(Span::new(0, 1));
-        diagnostic.builder()
-            .report(crate::eoc::utils::diagnostic::DiagnosticLevel::Error, "Unterminated string literal", info, None)
-            .add_error("Unterminated string literal", Some(Span::from_usize(1, s.len())))
+        diagnostic
+            .builder()
+            .report(
+                crate::eoc::utils::diagnostic::DiagnosticLevel::Error,
+                "Unterminated string literal",
+                info,
+                None,
+            )
+            .add_error(
+                "Unterminated string literal",
+                Some(Span::from_usize(1, s.len())),
+            )
             .commit();
         None
     }
@@ -1053,7 +1063,7 @@ impl IREbnfParserMatcher {
             let c = c.unwrap();
 
             count += 1;
-            
+
             if c == '\\' {
                 is_escaping = !is_escaping;
                 count -= 1;
@@ -1062,8 +1072,14 @@ impl IREbnfParserMatcher {
                     if count != 1 {
                         let span = Span::from_usize(i, i + c.len_utf8());
                         let info = source_manager.get_source_info(span);
-                        diagnostic.builder()
-                            .report(crate::eoc::utils::diagnostic::DiagnosticLevel::Error, "Invalid character literal", info, None)
+                        diagnostic
+                            .builder()
+                            .report(
+                                crate::eoc::utils::diagnostic::DiagnosticLevel::Error,
+                                "Invalid character literal",
+                                info,
+                                None,
+                            )
                             .add_error("Invalid character literal", Some(span))
                             .commit();
                         return None;
@@ -1077,8 +1093,14 @@ impl IREbnfParserMatcher {
                         _ => {
                             let span = Span::from_usize(i, i + c.len_utf8());
                             let info = source_manager.get_source_info(span);
-                            diagnostic.builder()
-                                .report(crate::eoc::utils::diagnostic::DiagnosticLevel::Error, "Invalid escape sequence", info, None)
+                            diagnostic
+                                .builder()
+                                .report(
+                                    crate::eoc::utils::diagnostic::DiagnosticLevel::Error,
+                                    "Invalid escape sequence",
+                                    info,
+                                    None,
+                                )
                                 .add_error("Invalid escape sequence", Some(span))
                                 .commit();
                             return None;
@@ -1092,11 +1114,19 @@ impl IREbnfParserMatcher {
         }
 
         let info = source_manager.get_source_info(Span::new(0, 1));
-        diagnostic.builder()
-            .report(crate::eoc::utils::diagnostic::DiagnosticLevel::Error, "Unterminated character literal", info, None)
-            .add_error("Unterminated character literal", Some(Span::from_usize(1, s.len())))
+        diagnostic
+            .builder()
+            .report(
+                crate::eoc::utils::diagnostic::DiagnosticLevel::Error,
+                "Unterminated character literal",
+                info,
+                None,
+            )
+            .add_error(
+                "Unterminated character literal",
+                Some(Span::from_usize(1, s.len())),
+            )
             .commit();
         None
     }
-
 }

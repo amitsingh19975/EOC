@@ -735,7 +735,7 @@ impl Lexer {
         if let Some(name_token) = name_token {
             let name = std::str::from_utf8(&self.source_manager[name_token.span]).unwrap();
             let mut matcher = EbnfParserMatcher::new();
-            matcher.init(Some(program), &mut self.diagnostics);
+            matcher.init(Some(program), RelativeSourceManager::new(&self.source_manager, self.cursor as u32), &mut self.diagnostics);
             let name = UniqueString::new(name);
             if self.block_lexer_matcher.contains_key(&name) {
                 self.diagnostics
@@ -754,7 +754,7 @@ impl Lexer {
             }
             self.block_lexer_matcher.insert(name, matcher);
         } else {
-            matcher.init(Some(program), &mut self.diagnostics);
+            matcher.init(Some(program), RelativeSourceManager::new(&self.source_manager, self.cursor as u32), &mut self.diagnostics);
         }
     }
 
@@ -2050,7 +2050,8 @@ impl Lexer {
 
     pub fn lex(&mut self) -> Vec<Token> {
         let mut matcher = EbnfParserMatcher::new();
-        matcher.init(None, &mut self.diagnostics);
+        let relative = RelativeSourceManager::new(&self.source_manager, self.cursor as u32);
+        matcher.init(None, relative, &mut self.diagnostics);
         let cursor = self.cursor;
         let mut tokens = self.lex_helper(&mut matcher, Vec::new(), true, false);
         let mut i = 0;
