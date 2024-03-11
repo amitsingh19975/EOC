@@ -1,5 +1,5 @@
 
-use std::{collections::HashSet, fmt::Display, sync::RwLock};
+use std::{collections::HashSet, fmt::Display, hash::Hash, sync::RwLock};
 
 use lazy_static::lazy_static;
 
@@ -7,7 +7,7 @@ lazy_static! {
     static ref STRING_INTERNER: RwLock<HashSet<&'static str>> = RwLock::new(HashSet::new());
 }
 
-#[derive(Debug, Eq, Hash, Clone, Copy)]
+#[derive(Debug, Eq, Clone, Copy)]
 pub(crate) struct UniqueString(&'static str);
 
 impl Display for UniqueString {
@@ -87,5 +87,11 @@ impl PartialEq<UniqueString> for String {
 impl AsRef<str> for UniqueString {
     fn as_ref(&self) -> &str {
         self.0
+    }
+}
+
+impl Hash for UniqueString {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.as_ptr().hash(state);
     }
 }
