@@ -26,7 +26,7 @@ pub(crate) trait EbnfMatcher {
         &self,
         s: &'b [u8],
         _source_manager: RelativeSourceManager<'b>,
-        _diagnostics: &mut Diagnostic,
+        _diagnostic: &mut Diagnostic,
     ) -> Option<char> {
         ByteToCharIter::new(s).next().filter(|c| c.is_ascii_digit())
     }
@@ -35,7 +35,7 @@ pub(crate) trait EbnfMatcher {
         &self,
         s: &'b [u8],
         _source_manager: RelativeSourceManager<'b>,
-        _diagnostics: &mut Diagnostic,
+        _diagnostic: &mut Diagnostic,
     ) -> Option<char> {
         ByteToCharIter::new(s)
             .next()
@@ -46,7 +46,7 @@ pub(crate) trait EbnfMatcher {
         &self,
         s: &'b [u8],
         _source_manager: RelativeSourceManager<'b>,
-        _diagnostics: &mut Diagnostic,
+        _diagnostic: &mut Diagnostic,
     ) -> Option<char> {
         ByteToCharIter::new(s)
             .next()
@@ -57,7 +57,7 @@ pub(crate) trait EbnfMatcher {
         &self,
         s: &'b [u8],
         _source_manager: RelativeSourceManager<'b>,
-        _diagnostics: &mut Diagnostic,
+        _diagnostic: &mut Diagnostic,
     ) -> Option<char> {
         ByteToCharIter::new(s)
             .next()
@@ -120,7 +120,7 @@ pub(crate) trait EbnfMatcher {
         var: &str,
         s: &'a [u8],
         source_manager: RelativeSourceManager<'a>,
-        diagnostics: &mut Diagnostic,
+        diagnostic: &mut Diagnostic,
     ) -> Option<&'a [u8]>;
 
     fn try_match_expr<'b>(
@@ -463,10 +463,10 @@ impl EbnfMatcher for CustomEbnfParserMatcher {
         var: &str,
         s: &'a [u8],
         source_manager: RelativeSourceManager<'a>,
-        diagnostics: &mut Diagnostic,
+        diagnostic: &mut Diagnostic,
     ) -> Option<&'a [u8]> {
         if let Some(expr) = self.env.get(var) {
-            let temp = expr.match_expr(self, s, &self.env, source_manager, diagnostics);
+            let temp = expr.match_expr(self, s, &self.env, source_manager, diagnostic);
             temp
         } else {
             None
@@ -680,20 +680,20 @@ impl EbnfMatcher for DefaultEbnfParserMatcher {
         var: &str,
         s: &'a [u8],
         source_manager: RelativeSourceManager<'a>,
-        diagnostics: &mut Diagnostic,
+        diagnostic: &mut Diagnostic,
     ) -> Option<&'a [u8]> {
         match var {
             _ if var == NATIVE_CALL_KIND_ID.identifier_sym => {
-                self.match_native_identifier(s, source_manager, diagnostics)
+                self.match_native_identifier(s, source_manager, diagnostic)
             }
             _ if var == NATIVE_CALL_KIND_ID.operator_sym => {
-                self.match_native_operator(s, source_manager, diagnostics)
+                self.match_native_operator(s, source_manager, diagnostic)
             }
             _ if var == NATIVE_CALL_KIND_ID.fp_sym => {
-                self.match_native_floating_point(s, source_manager, diagnostics)
+                self.match_native_floating_point(s, source_manager, diagnostic)
             }
             _ if var == NATIVE_CALL_KIND_ID.integer_sym => {
-                self.match_native_integer(s, source_manager, diagnostics)
+                self.match_native_integer(s, source_manager, diagnostic)
             }
             _ => None,
         }
