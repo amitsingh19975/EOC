@@ -3,3 +3,4 @@ pub(crate) mod ast;
 pub(crate) mod expr;
 pub(crate) mod native_call;
 pub(crate) mod matcher;
+pub(super) mod vm;

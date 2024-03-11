@@ -61,7 +61,19 @@ impl<'a> EbnfParser<'a> {
             cursor: 0,
         };
 
-        parser.parse_statements()
+        let temp = parser.parse_statements();
+        // let mut vm_builder = VmBuilder::new(RelativeSourceManager::new(source_manager, 0), diagnostic);
+        // vm_builder.from_expr(temp.clone());
+        // let vm = vm_builder.build();
+        // // println!("{:#?}", vm);
+        // let s = r#""asdf""#;
+        // let m = vm.match_expr_for("string_literal", s.as_bytes(), RelativeSourceManager::new(source_manager, 0), diagnostic);
+        // if let Some(m) = m {
+        //     println!("is_valid: {}", std::str::from_utf8(m).unwrap());
+        // } else {
+        //     println!("is_invalid");
+        // }
+        temp
     }
 
     fn is_empty(&self) -> bool {

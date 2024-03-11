@@ -1,17 +1,19 @@
+use lazy_static::lazy_static;
 use std::fmt::{Debug, Display};
 
 use crate::eoc::{
     ast::identifier::Identifier,
     lexer::{
+        number::{parse_floating_point, parse_integer},
         str_utils::ByteToCharIter,
         utils::{
             is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point,
         },
     },
-    utils::diagnostic::Diagnostic,
+    utils::{diagnostic::Diagnostic, string::UniqueString},
 };
 
-use super::{ast::RelativeSourceManager, matcher::CustomEbnfParserMatcher};
+use super::{ast::RelativeSourceManager, matcher::{CustomEbnfParserMatcher, EbnfMatcher}, vm::Vm};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum NativeCallKind {
@@ -160,9 +162,7 @@ impl NativeCallKind {
                 }
             }
             Self::Integer => matcher.match_native_integer(s, source_manager, diagnostic),
-            Self::FloatingPoint => {
-                matcher.match_native_floating_point(s, source_manager, diagnostic)
-            }
+            Self::FloatingPoint => matcher.match_native_floating_point(s, source_manager, diagnostic)
         }
     }
 
@@ -172,6 +172,131 @@ impl NativeCallKind {
             | "digit" | "letter" | "hex_digit" | "oct_digit" | "bin_digit" | "alpha_numeric"
             | "start_operator" | "floating_point" | "integer" | "cont_operator" => true,
             _ => false,
+        }
+    }
+
+    pub(super) fn call_vm<'b>(
+        &self,
+        vm: &Vm,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        let c = ByteToCharIter::new(s).next();
+        if c.is_none() {
+            return None;
+        }
+
+        let c = c.unwrap();
+
+        match self {
+            Self::StartIdentifier => {
+                if is_valid_identifier_start_code_point(c) {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::ContIdentifier => {
+                if is_valid_identifier_continuation_code_point(c) {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::Whitespace => {
+                if c.is_whitespace() {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::NewLine => {
+                if c == '\n' {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::Tab => {
+                if c == '\t' {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::Digit => {
+                if c.is_digit(10) {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::Letter => {
+                if c.is_alphabetic() {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::HexDigit => {
+                if c.is_digit(16) {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::OctDigit => {
+                if c.is_digit(8) {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::BinDigit => {
+                if c.is_digit(2) {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::AlphaNumeric => {
+                if c.is_alphanumeric() {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::StartOperator => {
+                if Identifier::is_operator_start_code_point(c) {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::ContOperator => {
+                if Identifier::is_operator_continuation_code_point(c) {
+                    Some(&s[..c.len_utf8()])
+                } else {
+                    None
+                }
+            }
+            Self::Integer => parse_integer(
+                s,
+                |s, sr, d| vm.is_digit(s, sr, d),
+                |s, sr, d| vm.is_hex_digit(s, sr, d),
+                |s, sr, d| vm.is_oct_digit(s, sr, d),
+                |s, sr, d| vm.is_binary_digit(s, sr, d),
+                source_manager,
+                diagnostic,
+            ),
+            Self::FloatingPoint => parse_floating_point(
+                s,
+                |s, sr, d| vm.is_digit(s, sr, d),
+                |s, sr, d| vm.is_hex_digit(s, sr, d),
+                source_manager,
+                diagnostic,
+            ),
         }
     }
 }
@@ -221,4 +346,34 @@ impl PartialEq<str> for NativeCallKind {
     fn eq(&self, other: &str) -> bool {
         self.as_str() == other
     }
+}
+
+pub(crate) struct NativeCallKindId {
+    pub(crate) is_digit: UniqueString,
+    pub(crate) is_hex_digit: UniqueString,
+    pub(crate) is_oct_digit: UniqueString,
+    pub(crate) is_binary_digit: UniqueString,
+    pub(crate) identifier_sym: UniqueString,
+    pub(crate) operator_sym: UniqueString,
+    pub(crate) integer_sym: UniqueString,
+    pub(crate) fp_sym: UniqueString,
+}
+
+impl NativeCallKindId {
+    pub(crate) fn new() -> Self {
+        Self {
+            is_digit: UniqueString::new(NativeCallKind::Digit.as_str()),
+            is_hex_digit: UniqueString::new(NativeCallKind::HexDigit.as_str()),
+            is_oct_digit: UniqueString::new(NativeCallKind::OctDigit.as_str()),
+            is_binary_digit: UniqueString::new(NativeCallKind::BinDigit.as_str()),
+            identifier_sym: UniqueString::new("identifier"),
+            operator_sym: UniqueString::new("operator"),
+            integer_sym: UniqueString::new("integer"),
+            fp_sym: UniqueString::new("floating_point"),
+        }
+    }
+}
+
+lazy_static! {
+    pub(crate) static ref NATIVE_CALL_KIND_ID: NativeCallKindId = NativeCallKindId::new();
 }
