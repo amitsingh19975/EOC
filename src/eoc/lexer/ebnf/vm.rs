@@ -92,9 +92,14 @@ impl VmNode {
         if pc >= vm.nodes.len() {
             return;
         }
+        
+        #[cfg(debug_assertions)]
         state.call_stack.push(pc);
+
         let off = Self::exec_helper(vm, state, s, source_manager, diagnostic);
         state.pc = (pc + off).min(vm.nodes.len() - 1);
+        
+        #[cfg(debug_assertions)]
         state.call_stack.pop();
     }
 
@@ -225,7 +230,6 @@ impl VmNode {
             }
             VmNode::Concat(count, off) => {
                 let off = *off as usize;
-                state.is_test = s[state.cursor..].starts_with(b"\"Test");
                 for _ in 0..*count {
                     let current_cursor = state.cursor;
                     Self::exec(vm, state, s, source_manager, diagnostic);
@@ -272,8 +276,6 @@ impl VmNode {
                         break;
                     }
                 }
-
-                state.print_call_stack(vm);
                 
                 state.cursor = end_cursor;
                 state.push_bool(start_cursor < end_cursor);
@@ -327,15 +329,41 @@ impl VmNode {
     }
 }
 
+#[cfg(debug_assertions)]
 struct VmState {
     stack: Vec<Value>,
     call_stack: Vec<usize>,
     pc: usize,
-    cursor: usize,
-    is_test: bool,
+    cursor: usize
+}
+
+#[cfg(not(debug_assertions))]
+struct VmState {
+    stack: Vec<Value>,
+    pc: usize,
+    cursor: usize
 }
 
 impl VmState {
+    #[cfg(debug_assertions)]
+    fn new(pc: usize) -> Self {
+        Self {
+            stack: Vec::new(),
+            call_stack: Vec::new(),
+            pc,
+            cursor: 0
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn new(pc: usize) -> Self {
+        Self {
+            stack: Vec::new(),
+            pc,
+            cursor: 0
+        }
+    }
+
     fn next_pc(&mut self) -> usize {
         let pc = self.pc;
         self.pc += 1;
@@ -354,6 +382,7 @@ impl VmState {
         self.stack.last().expect("Stack is empty").as_bool()
     }
 
+    #[cfg(debug_assertions)]
     fn print_call_stack(&self, vm: &Vm) {
         println!("Call Stack: ============================");
         for pc in self.call_stack.iter().rev() {
@@ -402,13 +431,8 @@ impl Vm {
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &mut Diagnostic,
     ) -> Option<&'b [u8]> {
-        let mut state = VmState {
-            stack: Vec::new(),
-            pc: id,
-            cursor: 0,
-            call_stack: Vec::new(),
-            is_test: false,
-        };
+
+        let mut state = VmState::new(id);
         
         VmNode::exec(self, &mut state, s, source_manager, diagnostic);
 
