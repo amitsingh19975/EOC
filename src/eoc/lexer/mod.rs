@@ -1158,6 +1158,11 @@ impl Lexer {
                 continue;
             }
 
+            if is_code_block {
+                if self.source_manager.get_source()[self.cursor..].as_ref().starts_with(b"```") {
+                    break;
+                }
+            }
             if until.contains(&ch) {
                 break;
             }
@@ -1174,7 +1179,6 @@ impl Lexer {
                 last_cursor = Some(self.cursor);
                 continue;
             }
-
 
             let mut should_run_custom_match = true;
 

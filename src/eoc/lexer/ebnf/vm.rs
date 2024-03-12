@@ -1,23 +1,892 @@
-use crate::eoc::utils::diagnostic::Diagnostic;
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
-use super::ast::RelativeSourceManager;
+use crate::eoc::{
+    lexer::{
+        str_utils::{get_utf8_char_len, ByteToCharIter},
+        token::TokenKind,
+    },
+    utils::{
+        diagnostic::{Diagnostic, DiagnosticLevel, DiagnosticReporter},
+        string::UniqueString,
+    },
+};
 
-pub(crate) struct Vm;
+use super::{
+    ast::RelativeSourceManager,
+    expr::{EbnfExpr, TerminalValue},
+    matcher::EbnfMatcher,
+    native_call::{NativeCallKind, NATIVE_CALL_KIND_ID},
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Value {
+    Bool(bool),
+    Char(char),
+    U8(u8),
+    U16(u16),
+}
+
+impl Value {
+    fn as_bool(&self) -> bool {
+        match self {
+            Value::Bool(b) => *b,
+            _ => panic!("Invalid value: {:?}", self),
+        }
+    }
+
+    fn as_char(&self) -> char {
+        match self {
+            Value::Char(c) => *c,
+            _ => panic!("Invalid value: {:?}", self),
+        }
+    }
+
+    fn as_u8(&self) -> u8 {
+        match self {
+            Value::U8(u) => *u,
+            _ => panic!("Invalid value: {:?}", self),
+        }
+    }
+
+    fn as_u16(&self) -> u16 {
+        match self {
+            Value::U16(u) => *u,
+            _ => panic!("Invalid value: {:?}", self),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum VmNode {
+    Call(u16, String),
+    NativeCall(NativeCallKind),
+    Terminal(TerminalValue),
+    TerminalHash(Vec<TerminalValue>, HashSet<TerminalValue>),
+    Range(char, char, bool),
+    AnyChar,
+
+    // ===== Binary Operators =====
+    Alternative(u16, u16), // Alternative a, b
+    Concat(u16, u16),      // Concat a, b
+    Exception(u16, u16),   // Exception a, b
+    // ===========================
+
+    // ===== Unary Operators =====
+    Optional(u16), // Optional a
+    // ===========================
+    Repetition(u16), // Repeat if [stack-value]
+}
+
+impl VmNode {
+    fn exec<'b>(
+        vm: &Vm,
+        state: &mut VmState,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) {
+        let pc = state.pc;
+        if pc >= vm.nodes.len() {
+            return;
+        }
+        state.call_stack.push(pc);
+        let off = Self::exec_helper(vm, state, s, source_manager, diagnostic);
+        state.pc = (pc + off).min(vm.nodes.len() - 1);
+        state.call_stack.pop();
+    }
+
+    fn exec_helper<'b>(
+        vm: &Vm,
+        state: &mut VmState,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> usize {
+        let node = &vm.nodes[state.pc];
+        state.next_pc();
+        match node {
+            VmNode::Terminal(t) => {
+                let slice = s[state.cursor..].as_ref();
+
+                let is_matched = match t {
+                    TerminalValue::String(t) => slice.starts_with(t.as_bytes()),
+                    TerminalValue::Char(c) => ByteToCharIter::new(slice).next() == Some(*c),
+                };
+
+                if is_matched {
+                    state.cursor += t.len_utf8();
+                    state.push_bool(true);
+                } else {
+                    state.push_bool(false);
+                }
+            }
+            VmNode::Call(addr, ..) => {
+                state.pc = *addr as usize;
+                Self::exec(vm, state, s, source_manager, diagnostic);
+            }
+            VmNode::NativeCall(k) => {
+                if let Some(temp_s) =
+                    k.call_vm(vm, s[state.cursor..].as_ref(), source_manager, diagnostic)
+                {
+                    state.cursor += temp_s.len();
+                }
+            }
+            VmNode::TerminalHash(v, h) => {
+                let slice = s[state.cursor..].as_ref();
+                let ch = ByteToCharIter::new(slice).next();
+                if ch.is_none() {
+                    state.push_bool(false);
+                    return 1;
+                }
+
+                let ch = ch.unwrap();
+
+                if h.contains(&TerminalValue::Char(ch)) {
+                    state.cursor += ch.len_utf8();
+                    state.push_bool(true);
+                    return 1;
+                }
+
+                let mut found = false;
+                for t in v {
+                    match t {
+                        TerminalValue::Char(c) => panic!("Invalid terminal value: {:?}", c),
+                        TerminalValue::String(a) => {
+                            if slice.starts_with(a.as_bytes()) {
+                                state.cursor += a.len();
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                state.stack.push(Value::Bool(found));
+            }
+            VmNode::Range(a, b, inclusive) => {
+                let l = *a;
+                let r = *b;
+
+                let slice = s[state.cursor..].as_ref();
+                let ch = ByteToCharIter::new(slice).next();
+
+                if ch.is_none() {
+                    state.push_bool(false);
+                    return 1;
+                }
+
+                let ch = ch.unwrap();
+                if *inclusive {
+                    if (l..=r).contains(&ch) {
+                        state.cursor += ch.len_utf8();
+                        state.push_bool(true);
+                    } else {
+                        state.push_bool(false);
+                    }
+                } else {
+                    if (l..r).contains(&ch) {
+                        state.cursor += ch.len_utf8();
+                        state.push_bool(true);
+                    } else {
+                        state.push_bool(false);
+                    }
+                }
+            }
+            VmNode::AnyChar => {
+                let slice = s[state.cursor..].as_ref();
+                let ch = ByteToCharIter::new(slice).next();
+                if ch.is_none() {
+                    state.push_bool(false);
+                    return 1;
+                }
+
+                let ch = ch.unwrap();
+                state.cursor += ch.len_utf8();
+                state.push_bool(true);
+            }
+            VmNode::Alternative(count, off) => {
+                let off = *off as usize;
+                let mut found = false;
+
+                for _ in 0..*count {
+                    Self::exec(vm, state, s, source_manager, diagnostic);
+                    let res = state.pop_bool();
+                    if res {
+                        found = true;
+                        break;
+                    }
+                }
+
+                state.push_bool(found);
+                return off;
+            }
+            VmNode::Concat(count, off) => {
+                let off = *off as usize;
+                state.is_test = s[state.cursor..].starts_with(b"\"Test");
+                for _ in 0..*count {
+                    let current_cursor = state.cursor;
+                    Self::exec(vm, state, s, source_manager, diagnostic);
+                    let res = state.pop_bool() && (current_cursor != state.cursor);
+                    if !res {
+                        state.push_bool(false);
+                        return off;
+                    }
+                }
+
+                state.push_bool(true);
+                return off;
+            }
+            VmNode::Exception(count, off) => {
+                let off = *off as usize;
+                let start_cursor = state.cursor;
+                
+                Self::exec(vm, state, s, source_manager, diagnostic);
+                let mut end_cursor = state.cursor;
+
+                if !state.pop_bool() || start_cursor == end_cursor {
+                    state.cursor = start_cursor;
+                    state.push_bool(false);
+                    return off;
+                }
+                
+                for _ in 1..*count {
+                    let pc = state.pc;
+                    for i in (start_cursor..end_cursor).rev() {
+                        state.pc = pc;
+                        state.cursor = i;
+                        let temp_start = state.cursor;
+                        Self::exec(vm, state, s, source_manager, diagnostic);
+                        let temp_end = state.cursor;
+                        let res = state.pop_bool();
+                        let len = temp_end - temp_start;
+                        if res {
+                            end_cursor -= len.min(end_cursor - start_cursor);
+                            break;
+                        }
+                    }
+
+                    if start_cursor == end_cursor {
+                        break;
+                    }
+                }
+
+                println!("Start: {}, End: {}, '{}'", start_cursor, end_cursor, std::str::from_utf8(&s[..end_cursor]).unwrap());
+                state.print_call_stack(vm);
+                
+                state.cursor = end_cursor;
+                state.push_bool(start_cursor < end_cursor);
+                return off;
+            }
+            VmNode::Optional(off) => {
+                let off = *off as usize;
+                Self::exec(vm, state, s, source_manager, diagnostic);
+                let _ = state.pop_bool();
+                state.push_bool(true);
+                return off;
+            }
+            VmNode::Repetition(off) => {
+                let off = *off as usize;
+
+                if s.is_empty() {
+                    state.push_bool(false);
+                    return off;
+                }
+
+                let current_pc = state.pc;
+                let old_cursor = state.cursor;
+                loop {
+                    if s.len() <= state.cursor {
+                        break;
+                    }
+                    
+                    let current_cursor = state.cursor;
+                    Self::exec(vm, state, s, source_manager, diagnostic);
+                    let res = state.pop_bool();
+                    
+                    if !res {
+                        break;
+                    }
+
+                    if current_cursor == state.cursor {
+                        break;
+                    }
+
+                    state.pc = current_pc;
+                }
+
+                state
+                    .stack
+                    .push(Value::Bool(old_cursor != state.cursor));
+
+                return off;
+            }
+        }
+        1
+    }
+}
+
+struct VmState {
+    stack: Vec<Value>,
+    call_stack: Vec<usize>,
+    pc: usize,
+    cursor: usize,
+    is_test: bool,
+}
+
+impl VmState {
+    fn next_pc(&mut self) -> usize {
+        let pc = self.pc;
+        self.pc += 1;
+        pc
+    }
+
+    fn push_bool(&mut self, b: bool) {
+        self.stack.push(Value::Bool(b));
+    }
+
+    fn pop_bool(&mut self) -> bool {
+        self.stack.pop().expect("Stack is empty").as_bool()
+    }
+
+    fn peek_bool(&self) -> bool {
+        self.stack.last().expect("Stack is empty").as_bool()
+    }
+
+    fn print_call_stack(&self, vm: &Vm) {
+        println!("Call Stack: ============================");
+        for pc in self.call_stack.iter().rev() {
+            if let Some((_, s)) = vm.def_identifiers.iter().find(|(i, _)| *i == *pc) {
+                println!("{}: {:?} => {}", pc, vm.nodes[*pc], s);
+            } else {
+                println!("{}: {:?}", pc, vm.nodes[*pc]);
+            }
+        }
+        println!("========================================\n");
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Vm {
+    nodes: Vec<VmNode>,
+    identifiers: HashMap<String, usize>,
+    def_identifiers: Vec<(usize, UniqueString)>,
+}
 
 impl Vm {
-    pub(super) fn is_digit<'b>(&self, s: &'b [u8], source_manager: RelativeSourceManager<'b>, diagnostics: &mut Diagnostic) -> Option<char> {
+    pub fn new() -> Self {
+        Self {
+            nodes: Vec::new(),
+            identifiers: HashMap::new(),
+            def_identifiers: Vec::new(),
+        }
+    }
+
+    pub(super) fn init<'b>(
+        &mut self,
+        expr: EbnfExpr,
+        _source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) {
+        let mut builder = VmBuilder::new();
+        builder.from(expr, diagnostic);
+        let vm = builder.build();
+        self.merge(vm);
+    }
+
+    pub fn run<'b>(
+        &self,
+        id: usize,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        let mut state = VmState {
+            stack: Vec::new(),
+            pc: id,
+            cursor: 0,
+            call_stack: Vec::new(),
+            is_test: false,
+        };
+        
+        VmNode::exec(self, &mut state, s, source_manager, diagnostic);
+
+        let temp_s = s[..state.cursor.min(s.len())].as_ref();
+
+        let value = state.pop_bool();
+        if !value {
+            None
+        } else {
+            Some(temp_s)
+        }
+    }
+
+    fn match_native_operator<'b>(
+        &self,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        if s.is_empty() {
+            return None;
+        }
+        if self
+            .match_native(NativeCallKind::StartOperator, s, source_manager, diagnostic)
+            .is_none()
+        {
+            return None;
+        }
+
+        let mut i = get_utf8_char_len(s[0]);
+        while i < s.len() {
+            let end = get_utf8_char_len(s[i]);
+            let temp_source = &s[i..];
+            if self
+                .match_native(
+                    NativeCallKind::ContOperator,
+                    temp_source,
+                    source_manager,
+                    diagnostic,
+                )
+                .is_none()
+            {
+                break;
+            }
+
+            i += end;
+        }
+
+        Some(&s[..i])
+    }
+
+    fn match_expr_helper<'b>(
+        &self,
+        id: usize,
+        symbol: UniqueString,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<(&'b [u8], TokenKind)> {
+        let key = symbol.as_str();
+        match symbol {
+            u_str if u_str == NATIVE_CALL_KIND_ID.identifier_sym => {
+                let temp = if !self.contains_def(key) {
+                    self.match_native_identifier(s, source_manager, diagnostic)
+                        .map(|s| (s, TokenKind::Identifier))
+                } else {
+                    self.run(id, s, source_manager, diagnostic)
+                        .map(|s| (s, TokenKind::Identifier))
+                };
+                temp
+            }
+            u_str if u_str == NATIVE_CALL_KIND_ID.operator_sym => {
+                let temp = if !self.contains_def(key) {
+                    self.match_native_operator(s, source_manager, diagnostic)
+                        .map(|s| (s, TokenKind::Operator))
+                } else {
+                    self.run(id, s, source_manager, diagnostic)
+                        .map(|s| (s, TokenKind::Operator))
+                };
+                temp
+            }
+            u_str if u_str == NATIVE_CALL_KIND_ID.fp_sym => {
+                let temp = if !self.contains_def(key) {
+                    self.match_native_floating_point(s, source_manager, diagnostic)
+                        .map(|s| (s, TokenKind::FloatingPoint))
+                } else {
+                    self.run(id, s, source_manager, diagnostic)
+                        .map(|s| (s, TokenKind::FloatingPoint))
+                };
+                temp
+            }
+            u_str if u_str == NATIVE_CALL_KIND_ID.integer_sym => {
+                let temp = if !self.contains_def(key) {
+                    self.match_native_integer(s, source_manager, diagnostic)
+                        .map(|s| (s, TokenKind::Integer))
+                } else {
+                    self.run(id, s, source_manager, diagnostic)
+                        .map(|s| (s, TokenKind::Integer))
+                };
+                temp
+            }
+            _ => self
+                .run(id, s, source_manager, diagnostic)
+                .map(|s| (s, TokenKind::CustomToken(symbol))),
+        }
+    }
+
+    pub(crate) fn match_native_identifier<'b>(
+        &self,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        if s.is_empty() {
+            return None;
+        }
+
+        if self
+            .match_native(
+                NativeCallKind::StartIdentifier,
+                s,
+                source_manager,
+                diagnostic,
+            )
+            .is_none()
+        {
+            return None;
+        }
+
+        let mut i = get_utf8_char_len(s[0]);
+        while i < s.len() {
+            let end = get_utf8_char_len(s[i]);
+            let temp_source = &s[i..(i + end).min(s.len() - 1)];
+            if self
+                .match_native(
+                    NativeCallKind::ContIdentifier,
+                    temp_source,
+                    source_manager,
+                    diagnostic,
+                )
+                .is_none()
+            {
+                return Some(&s[..i]);
+            }
+            i += end;
+        }
+
+        Some(&s[..i])
+    }
+
+    pub(super) fn print(&self) {
+        for (i, node) in self.nodes.iter().enumerate() {
+            if let Some((_, s)) = self.def_identifiers.iter().find(|(id, _)| *id == i) {
+                println!("{:04}: {:?} => {}", i, node, s);
+            } else {
+                println!("{:04}: {:?}", i, node);
+            }
+            
+        }
+        println!("\nIdentifiers: {:?}", self.def_identifiers);
+    }
+
+    fn set_base_offset(&mut self, base_off: usize) {
+        for node in self.nodes.iter_mut() {
+            match node {
+                VmNode::Call(addr, _) => *addr += base_off as u16,
+                _ => {}
+            }
+        }
+
+        for (_, id) in self.identifiers.iter_mut() {
+            *id += base_off;
+        }
+
+        for (id, _) in self.def_identifiers.iter_mut() {
+            *id += base_off;
+        }
+    }
+
+    fn merge(&mut self, mut vm: Vm) {
+        let base_off = self.nodes.len();
+        vm.set_base_offset(base_off);
+        let mut replace_offsets = HashMap::new();
+
+        for (k, off) in vm.identifiers.clone().into_iter() {
+            if let Some(c_off) = self.identifiers.get(&k).copied() {
+                replace_offsets.insert(off, c_off);
+                self.def_identifiers.iter_mut().for_each(|(id, _)| {
+                    if *id == c_off {
+                        *id = off;
+                    }
+                });
+            } else {
+                self.def_identifiers
+                    .push((off, UniqueString::new(k.as_str())));
+                self.identifiers.insert(k, off);
+            }
+        }
+
+        vm.replace_call(replace_offsets);
+    }
+
+    fn replace_call(&mut self, replace_offsets: HashMap<usize, usize>) {
+        for node in self.nodes.iter_mut() {
+            match node {
+                VmNode::Call(addr, ..) => {
+                    if let Some(new_addr) = replace_offsets.get(&(*addr as usize)) {
+                        *addr = *new_addr as u16;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn id_to_string(&self, id: usize) -> String {
+        if let Some((_, s)) = self.def_identifiers.iter().find(|(i, _)| *i == id) {
+            s.as_str().to_string()
+        } else {
+            id.to_string()
+        }
+    }
+}
+
+impl EbnfMatcher for Vm {
+    fn contains_def(&self, name: &str) -> bool {
+        self.identifiers.contains_key(name)
+    }
+
+    fn match_operator<'b>(
+        &self,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        if let Some(id) = self
+            .identifiers
+            .get(NATIVE_CALL_KIND_ID.operator_sym.as_ref())
+            .copied()
+        {
+            self.run(id, s, source_manager, diagnostic)
+        } else {
+            self.match_native_operator(s, source_manager, diagnostic)
+        }
+    }
+
+    fn match_identifier<'b>(
+        &self,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        if let Some(id) = self
+            .identifiers
+            .get(NATIVE_CALL_KIND_ID.identifier_sym.as_ref())
+            .copied()
+        {
+            self.run(id, s, source_manager, diagnostic)
+        } else {
+            self.match_native_identifier(s, source_manager, diagnostic)
+        }
+    }
+
+    fn match_native<'b>(
+        &self,
+        kind: super::native_call::NativeCallKind,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        if let Some(id) = self.identifiers.get(kind.as_str()).copied() {
+            self.run(id, s, source_manager, diagnostic)
+        } else {
+            kind.call_vm(self, s, source_manager, diagnostic)
+        }
+    }
+
+    fn match_expr_for<'a>(
+        &self,
+        var: &str,
+        s: &'a [u8],
+        source_manager: RelativeSourceManager<'a>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'a [u8]> {
+        if let Some(id) = self.identifiers.get(var).copied() {
+            self.run(id, s, source_manager, diagnostic)
+        } else {
+            None
+        }
+    }
+
+    fn try_match_expr<'b>(
+        &self,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<(&'b [u8], crate::eoc::lexer::token::TokenKind)> {
+        for (k, symbol) in self.def_identifiers.iter().rev() {
+            if let Some((s, kind)) =
+            self.match_expr_helper(*k, symbol.clone(), s, source_manager, diagnostic)
+            {
+                if s.len() == 0 {
+                    return None;
+                }
+                return Some((s, kind));
+            }
+        }
         None
     }
-    
-    pub(super) fn is_hex_digit<'b>(&self, s: &'b [u8], source_manager: RelativeSourceManager<'b>, diagnostics: &mut Diagnostic) -> Option<char> {
-        None
+}
+
+pub(super) struct VmBuilder {
+    nodes: Vec<VmNode>,
+    identifiers: Rc<HashMap<String, usize>>,
+    def_identifiers: Rc<Vec<(usize, UniqueString)>>,
+    all_defined_identifiers: Rc<HashMap<String, usize>>,
+}
+
+impl VmBuilder {
+    pub(super) fn new() -> Self {
+        Self {
+            nodes: Vec::new(),
+            identifiers: Rc::new(HashMap::new()),
+            def_identifiers: Rc::new(Vec::new()),
+            all_defined_identifiers: Rc::new(HashMap::new()),
+        }
     }
-    
-    pub(super) fn is_oct_digit<'b>(&self, s: &'b [u8], source_manager: RelativeSourceManager<'b>, diagnostics: &mut Diagnostic) -> Option<char> {
-        None
+
+    pub(super) fn build(self) -> Vm {
+        Vm {
+            nodes: self.nodes,
+            identifiers: Rc::try_unwrap(self.identifiers).unwrap(),
+            def_identifiers: Rc::try_unwrap(self.def_identifiers).unwrap(),
+        }
     }
-    
-    pub(super) fn is_binary_digit<'b>(&self, s: &'b [u8], source_manager: RelativeSourceManager<'b>, diagnostics: &mut Diagnostic) -> Option<char> {
-        None
+
+    pub(super) fn add_identifier(&mut self, key: String, id: usize, is_def: bool) {
+        if self.all_defined_identifiers.contains_key(&key) {
+            return;
+        }
+
+        Rc::get_mut(&mut self.all_defined_identifiers)
+            .unwrap()
+            .insert(key.clone(), id);
+
+        if is_def {
+            Rc::get_mut(&mut self.def_identifiers)
+                .unwrap()
+                .push((id, UniqueString::new(key.as_str())));
+            Rc::get_mut(&mut self.identifiers).unwrap().insert(key, id);
+        }
+    }
+
+    pub(super) fn get_identifier(&self, id: &str) -> Option<usize> {
+        self.all_defined_identifiers.get(id).copied()
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    pub(super) fn from<'b>(&mut self, value: EbnfExpr, diagnostic: &mut Diagnostic) {
+        match value {
+            EbnfExpr::Identifier(s, info) => {
+                if let Some(id) = self.get_identifier(s.as_str()) {
+                    self.nodes.push(VmNode::Call(id as u16, s));
+                } else {
+                    if let Some((info, span)) = info {
+                        diagnostic
+                            .builder()
+                            .report(DiagnosticLevel::Error, "Unknown identifier", info, None)
+                            .add_error(format!("Try defining '{s}'"), Some(span))
+                            .commit();
+                    } else {
+                        panic!("Unknown identifier: {}", s);
+                    }
+                }
+            }
+            EbnfExpr::Alternative(mut v, h, _) => {
+                let mut terms = Vec::new();
+                let mut i = 0;
+
+                while i < v.len() {
+                    if let EbnfExpr::Terminal(_) = &v[i] {
+                        let item = v.remove(i);
+                        if let EbnfExpr::Terminal(t) = item {
+                            terms.push(t);
+                        } else {
+                            unreachable!();
+                        }
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                let current_len = self.len();
+
+                let mut size = 0;
+
+                if !terms.is_empty() || !h.is_empty() {
+                    self.nodes.push(VmNode::TerminalHash(terms, h));
+                    size += 1;
+                }
+
+                if v.is_empty() && (current_len != self.len()) {
+                    return;
+                }
+
+                size += v.len() as u16;
+                for item in v {
+                    self.from(item, diagnostic);
+                }
+
+                let off = self.nodes.len() - current_len + 1;
+                self.nodes
+                    .insert(current_len, VmNode::Alternative(size, off as u16));
+            }
+            EbnfExpr::Concat(v, _) | EbnfExpr::Extend(v, _) => {
+                let current_len = self.len();
+                let size = v.len() as u16;
+                for item in v {
+                    self.from(item, diagnostic);
+                }
+
+                let off = self.nodes.len() - current_len + 1;
+                self.nodes
+                    .insert(current_len, VmNode::Concat(size, off as u16));
+            }
+            EbnfExpr::Exception(v, _) => {
+                let current_len = self.len();
+                let size = v.len() as u16;
+                for item in v {
+                    self.from(item, diagnostic);
+                }
+
+                let off = self.nodes.len() - current_len + 1;
+                self.nodes
+                    .insert(current_len, VmNode::Exception(size, off as u16));
+            }
+            EbnfExpr::Optional(e, _) => {
+                let current_len = self.len();
+                self.from(*e, diagnostic);
+                let off = self.nodes.len() - current_len + 1;
+                self.nodes.insert(current_len, VmNode::Optional(off as u16));
+            }
+            EbnfExpr::Repetition(e, _) => {
+                let current_len = self.len();
+                self.from(*e, diagnostic);
+                let off = self.nodes.len() - current_len + 1;
+                self.nodes
+                    .insert(current_len, VmNode::Repetition(off as u16));
+            }
+            EbnfExpr::Terminal(t) => {
+                self.nodes.push(VmNode::Terminal(t));
+            }
+            EbnfExpr::Statements(v, _) => {
+                v.into_iter().for_each(|item| self.from(item, diagnostic));
+            }
+            EbnfExpr::Variable { name, expr, is_def } => {
+                self.add_identifier(name, self.len(), is_def);
+                self.from(*expr, diagnostic);
+            }
+            EbnfExpr::Range {
+                lhs,
+                rhs,
+                inclusive,
+            } => {
+                self.nodes.push(VmNode::Range(lhs, rhs, inclusive));
+            }
+            EbnfExpr::AnyChar => {
+                self.nodes.push(VmNode::AnyChar);
+            }
+        }
     }
 }

@@ -19,6 +19,7 @@ use super::{
     ast::{EbnfParserMatcherDef, EbnfParserMatcherEnv, RelativeSourceManager},
     expr::{EbnfExpr, EbnfParserEnvVariable},
     native_call::{NativeCallKind, NATIVE_CALL_KIND_ID},
+    vm::{Vm, VmBuilder},
 };
 
 pub(crate) trait EbnfMatcher {
@@ -64,7 +65,7 @@ pub(crate) trait EbnfMatcher {
             .filter(|c| *c == '0' || *c == '1')
     }
 
-    fn contains_def(&self, name: &str) -> bool {
+    fn contains_def(&self, _name: &str) -> bool {
         false
     }
 
@@ -101,6 +102,13 @@ pub(crate) trait EbnfMatcher {
     }
 
     fn match_operator<'b>(
+        &self,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]>;
+
+    fn match_identifier<'b>(
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
@@ -392,26 +400,6 @@ impl CustomEbnfParserMatcher {
         }
     }
 
-    pub(crate) fn match_identifier<'b>(
-        &self,
-        s: &'b [u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<&'b [u8]> {
-        if let Some(expr) = self.env.get(NATIVE_CALL_KIND_ID.identifier_sym.as_str()) {
-            self.match_expr_helper(
-                NATIVE_CALL_KIND_ID.identifier_sym,
-                expr,
-                s,
-                source_manager,
-                diagnostic,
-            )
-            .map(|(s, _)| s)
-        } else {
-            self.match_native_identifier(s, source_manager, diagnostic)
-        }
-    }
-
     pub(crate) fn try_match_native_if_exists<'b>(
         &self,
         kind: NativeCallKind,
@@ -441,6 +429,26 @@ impl EbnfMatcher for CustomEbnfParserMatcher {
             .map(|(s, _)| s)
         } else {
             self.match_native_operator(s, source_manager, diagnostic)
+        }
+    }
+
+    fn match_identifier<'b>(
+        &self,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        if let Some(expr) = self.env.get(NATIVE_CALL_KIND_ID.identifier_sym.as_str()) {
+            self.match_expr_helper(
+                NATIVE_CALL_KIND_ID.identifier_sym,
+                expr,
+                s,
+                source_manager,
+                diagnostic,
+            )
+            .map(|(s, _)| s)
+        } else {
+            self.match_native_identifier(s, source_manager, diagnostic)
         }
     }
 
@@ -660,6 +668,15 @@ impl EbnfMatcher for DefaultEbnfParserMatcher {
         self.match_native_operator(s, source_manager, diagnostic)
     }
 
+    fn match_identifier<'b>(
+        &self,
+        s: &'b [u8],
+        source_manager: RelativeSourceManager<'b>,
+        diagnostic: &mut Diagnostic,
+    ) -> Option<&'b [u8]> {
+        self.match_native_identifier(s, source_manager, diagnostic)
+    }
+
     fn match_native<'b>(
         &self,
         kind: NativeCallKind,
@@ -720,7 +737,7 @@ impl EbnfMatcher for DefaultEbnfParserMatcher {
 }
 
 pub(crate) enum EbnfParserMatcher {
-    Custom(CustomEbnfParserMatcher),
+    Custom(Vm),
     Default(DefaultEbnfParserMatcher),
 }
 
@@ -738,9 +755,10 @@ impl EbnfParserMatcher {
             match self {
                 Self::Custom(m) => m.init(expr, source_manager, diagnostic),
                 Self::Default(_) => {
-                    let mut m = CustomEbnfParserMatcher::new();
-                    m.init(expr, source_manager, diagnostic);
-                    *self = Self::Custom(m);
+                    let mut m = VmBuilder::new();
+                    m.from(expr, diagnostic);
+                    let temp = m.build();
+                    *self = Self::Custom(temp);
                 }
             }
         }
@@ -848,8 +866,8 @@ impl EbnfParserMatcher {
     }
 }
 
-impl From<CustomEbnfParserMatcher> for EbnfParserMatcher {
-    fn from(m: CustomEbnfParserMatcher) -> Self {
+impl From<Vm> for EbnfParserMatcher {
+    fn from(m: Vm) -> Self {
         Self::Custom(m)
     }
 }

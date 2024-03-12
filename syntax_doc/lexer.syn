@@ -96,8 +96,9 @@ suffix_id = { digit } | (( letter | id_punct ), { letter | id_punct | digit }?);
 value_id ::= '%', suffix_id;
 
 escaped_char = '\', ['a' | 'b' | 'f' | 'n' | 'r' | 't' | 'v' | '"' | "'"];
-any_unicode_character = (. - '\') | escaped_char;
-string_literal ::= '"', { any_unicode_character - '"' }, '"';
+any_unicode_string_character = (. - '\' - '"') | escaped_char;
+string_literal ::= '"', { any_unicode_string_character }, '"';
+any_unicode_character = (. - '\' - "'") | escaped_char;
 character_literal ::= "'", (any_unicode_character - "'"), "'"; 
 
 symbol_ref_id ::= '@', (suffix_id | string_literal), ('::', symbol_ref_id)?;

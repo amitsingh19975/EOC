@@ -1,9 +1,32 @@
-```lexer
 
-digit = digit | '\u{0966}'..='\u{096F}';
+```lexer(ir)
 
-tensor_dims = { integer | 'x' };
-tensor ::= "Tensor", { whitespace }?, "<", whitespace?, tensor_dims, whitespace?, ">";
+digit = '0'..='9';
+hex_digit = '0'..='9' | 'a'..='f' | 'A'..='F';
+letter = 'a'..='z' | 'A'..='Z';
+id_punct = '$' | '.' | '_' | '-';
+
+decimal_literal = { digit };
+hexadecimal_literal = '0x', { hex_digit };
+integer_literal ::= decimal_literal | hexadecimal_literal;
+
+float_literal ::= ['-' | '+'], { digit }, '.', { digit }, (['e' | 'E'], ['-' | '+'], { digit })?;
+
+bare_id ::= ( letter | '_'? ), { letter | digit | ['_' | '$' | '.'] }?;
+
+suffix_id = { digit } | (( letter | id_punct ), { letter | id_punct | digit }?);
+value_id ::= '%', suffix_id;
+
+escaped_char = '\', ['a' | 'b' | 'f' | 'n' | 'r' | 't' | 'v' | '"' | "'"];
+any_unicode_string_character = (. - '\' - '"') | escaped_char;
+string_literal ::= '"', { any_unicode_string_character }, '"';
+any_unicode_character = (. - '\' - "'") | escaped_char;
+character_literal ::= "'", (any_unicode_character - "'"), "'"; 
 
 ```
-let a = Tensor  <१2x32x13>
+
+```ir
+
+"Testing"
+
+```
