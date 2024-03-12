@@ -273,7 +273,6 @@ impl VmNode {
                     }
                 }
 
-                println!("Start: {}, End: {}, '{}'", start_cursor, end_cursor, std::str::from_utf8(&s[..end_cursor]).unwrap());
                 state.print_call_stack(vm);
                 
                 state.cursor = end_cursor;
