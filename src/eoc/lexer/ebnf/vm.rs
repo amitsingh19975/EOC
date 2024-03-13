@@ -958,10 +958,48 @@ impl VmBuilder {
                 self.nodes
                     .insert(current_len, VmNode::Concat(size, off as u16));
             }
-            EbnfExpr::Exception(v, _) => {
+            EbnfExpr::Exception(mut v, _) => {
                 let current_len = self.len();
                 let size = v.len() as u16;
-                for item in v {
+                if v.is_empty() {
+                    return;
+                }
+
+                let first = v.remove(0);
+                self.from(first, diagnostic);
+
+                if v.len() > 1 {
+                    let alternative_start = self.len();
+
+                    let mut hash = HashSet::new();
+                    let mut terms = Vec::new();
+                    let mut count = 0;
+                    for item in v {
+                        match item {
+                            EbnfExpr::Terminal(t) => {
+                                if t.is_char() {
+                                    hash.insert(t);
+                                } else {
+                                    terms.push(t);
+                                }
+                            }
+                            _ => {
+                                self.from(item, diagnostic);
+                                count += 1;
+                            }
+                        }
+                    }
+
+                    if !terms.is_empty() || !hash.is_empty() {
+                        self.nodes.push(VmNode::TerminalHash(terms, hash));
+                        count += 1;
+                    }
+
+                    let off = self.len() - alternative_start + 1;
+                    self.nodes
+                        .insert(alternative_start, VmNode::Alternative(count as u16, off as u16));
+                } else {
+                    let item = v.remove(0);
                     self.from(item, diagnostic);
                 }
 
