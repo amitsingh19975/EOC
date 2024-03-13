@@ -7,11 +7,10 @@ use crate::eoc::{
     lexer::{
         str_utils::{get_utf8_char_len, ByteToCharIter},
         token::TokenKind,
-    },
-    utils::{
+    }, utils::{
         diagnostic::{Diagnostic, DiagnosticLevel, DiagnosticReporter},
         string::UniqueString,
-    },
+    }
 };
 
 use super::{
@@ -137,6 +136,9 @@ impl VmNode {
                     k.call_vm(vm, s[state.cursor..].as_ref(), source_manager, diagnostic)
                 {
                     state.cursor += temp_s.len();
+                    state.push_bool(true);
+                } else {
+                    state.push_bool(false);
                 }
             }
             VmNode::TerminalHash(v, h) => {
@@ -231,9 +233,8 @@ impl VmNode {
             VmNode::Concat(count, off) => {
                 let off = *off as usize;
                 for _ in 0..*count {
-                    let current_cursor = state.cursor;
                     Self::exec(vm, state, s, source_manager, diagnostic);
-                    let res = state.pop_bool() && (current_cursor != state.cursor);
+                    let res = state.pop_bool();
                     if !res {
                         state.push_bool(false);
                         return off;
@@ -305,6 +306,7 @@ impl VmNode {
                     
                     let current_cursor = state.cursor;
                     Self::exec(vm, state, s, source_manager, diagnostic);
+                    
                     let res = state.pop_bool();
                     
                     if !res {
@@ -399,7 +401,7 @@ impl VmState {
 #[derive(Debug, Clone)]
 pub(crate) struct Vm {
     nodes: Vec<VmNode>,
-    identifiers: HashMap<String, usize>,
+    identifiers: HashMap<String, (usize, bool)>,
     def_identifiers: Vec<(usize, UniqueString)>,
 }
 
@@ -585,7 +587,7 @@ impl Vm {
 
     pub(super) fn print(&self) {
         for (i, node) in self.nodes.iter().enumerate() {
-            if let Some((_, s)) = self.def_identifiers.iter().find(|(id, _)| *id == i) {
+            if let Some((s, _)) = self.identifiers.iter().find(|(_, p)| p.0 == i) {
                 println!("{:04}: {:?} => {}", i, node, s);
             } else {
                 println!("{:04}: {:?}", i, node);
@@ -603,7 +605,7 @@ impl Vm {
             }
         }
 
-        for (_, id) in self.identifiers.iter_mut() {
+        for (_, (id, _)) in self.identifiers.iter_mut() {
             *id += base_off;
         }
 
@@ -617,18 +619,20 @@ impl Vm {
         vm.set_base_offset(base_off);
         let mut replace_offsets = HashMap::new();
 
-        for (k, off) in vm.identifiers.clone().into_iter() {
-            if let Some(c_off) = self.identifiers.get(&k).copied() {
-                replace_offsets.insert(off, c_off);
+        let identifier = vm.identifiers.drain();
+
+        for (k, (off, is_def)) in identifier.into_iter() {
+            if let Some(c_p) = self.identifiers.get(&k).copied() {
+                replace_offsets.insert(off, c_p.0);
                 self.def_identifiers.iter_mut().for_each(|(id, _)| {
-                    if *id == c_off {
+                    if *id == c_p.0 {
                         *id = off;
                     }
                 });
             } else {
                 self.def_identifiers
                     .push((off, UniqueString::new(k.as_str())));
-                self.identifiers.insert(k, off);
+                self.identifiers.insert(k, (off, is_def));
             }
         }
 
@@ -659,7 +663,7 @@ impl Vm {
 
 impl EbnfMatcher for Vm {
     fn contains_def(&self, name: &str) -> bool {
-        self.identifiers.contains_key(name)
+        self.identifiers.get(name).map(|(_, is_def)| *is_def).unwrap_or(false)
     }
 
     fn match_operator<'b>(
@@ -668,7 +672,7 @@ impl EbnfMatcher for Vm {
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &mut Diagnostic,
     ) -> Option<&'b [u8]> {
-        if let Some(id) = self
+        if let Some((id, _)) = self
             .identifiers
             .get(NATIVE_CALL_KIND_ID.operator_sym.as_ref())
             .copied()
@@ -685,7 +689,7 @@ impl EbnfMatcher for Vm {
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &mut Diagnostic,
     ) -> Option<&'b [u8]> {
-        if let Some(id) = self
+        if let Some((id, _)) = self
             .identifiers
             .get(NATIVE_CALL_KIND_ID.identifier_sym.as_ref())
             .copied()
@@ -703,7 +707,7 @@ impl EbnfMatcher for Vm {
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &mut Diagnostic,
     ) -> Option<&'b [u8]> {
-        if let Some(id) = self.identifiers.get(kind.as_str()).copied() {
+        if let Some((id, _)) = self.identifiers.get(kind.as_str()).copied() {
             self.run(id, s, source_manager, diagnostic)
         } else {
             kind.call_vm(self, s, source_manager, diagnostic)
@@ -717,7 +721,7 @@ impl EbnfMatcher for Vm {
         source_manager: RelativeSourceManager<'a>,
         diagnostic: &mut Diagnostic,
     ) -> Option<&'a [u8]> {
-        if let Some(id) = self.identifiers.get(var).copied() {
+        if let Some((id, _)) = self.identifiers.get(var).copied() {
             self.run(id, s, source_manager, diagnostic)
         } else {
             None
@@ -742,20 +746,90 @@ impl EbnfMatcher for Vm {
         }
         None
     }
+
+    fn is_binary_digit<'b>(
+            &self,
+            s: &'b [u8],
+            source_manager: RelativeSourceManager<'b>,
+            diagnostic: &mut Diagnostic,
+        ) -> Option<char> {
+        if let Some((id, true)) = self.identifiers.get(NATIVE_CALL_KIND_ID.is_binary_digit.as_ref()) {
+            if let Some(s) = self.run(*id, s, source_manager, diagnostic) {
+                return ByteToCharIter::new(s).next();
+            }
+        } else {
+            if let Some(s) = self.match_native(NativeCallKind::BinDigit, s, source_manager, diagnostic) {
+                return ByteToCharIter::new(s).next();
+            }
+        }
+        None
+    }
+
+    fn is_digit<'b>(
+            &self,
+            s: &'b [u8],
+            source_manager: RelativeSourceManager<'b>,
+            diagnostic: &mut Diagnostic,
+        ) -> Option<char> {
+        if let Some((id, true)) = self.identifiers.get(NATIVE_CALL_KIND_ID.is_digit.as_ref()) {
+            if let Some(s) = self.run(*id, s, source_manager, diagnostic) {
+                return ByteToCharIter::new(s).next();
+            }
+        } else {
+            if let Some(s) = self.match_native(NativeCallKind::Digit, s, source_manager, diagnostic) {
+                return ByteToCharIter::new(s).next();
+            }
+        }
+        None
+    }
+
+    fn is_hex_digit<'b>(
+            &self,
+            s: &'b [u8],
+            source_manager: RelativeSourceManager<'b>,
+            diagnostic: &mut Diagnostic,
+        ) -> Option<char> {
+        if let Some((id, true)) = self.identifiers.get(NATIVE_CALL_KIND_ID.is_hex_digit.as_ref()) {
+            if let Some(s) = self.run(*id, s, source_manager, diagnostic) {
+                return ByteToCharIter::new(s).next();
+            }
+        } else {
+            if let Some(s) = self.match_native(NativeCallKind::HexDigit, s, source_manager, diagnostic) {
+                return ByteToCharIter::new(s).next();
+            }
+        }
+        None
+    }
+
+    fn is_oct_digit<'b>(
+            &self,
+            s: &'b [u8],
+            source_manager: RelativeSourceManager<'b>,
+            diagnostic: &mut Diagnostic,
+        ) -> Option<char> {
+        if let Some((id, true)) = self.identifiers.get(NATIVE_CALL_KIND_ID.is_oct_digit.as_ref()) {
+            if let Some(s) = self.run(*id, s, source_manager, diagnostic) {
+                return ByteToCharIter::new(s).next();
+            }
+        } else {
+            if let Some(s) = self.match_native(NativeCallKind::OctDigit, s, source_manager, diagnostic) {
+                return ByteToCharIter::new(s).next();
+            }
+        }
+        None
+    }
 }
 
 pub(super) struct VmBuilder {
     nodes: Vec<VmNode>,
-    identifiers: Rc<HashMap<String, usize>>,
     def_identifiers: Rc<Vec<(usize, UniqueString)>>,
-    all_defined_identifiers: Rc<HashMap<String, usize>>,
+    all_defined_identifiers: Rc<HashMap<String, (usize, bool)>>,
 }
 
 impl VmBuilder {
     pub(super) fn new() -> Self {
         Self {
             nodes: Vec::new(),
-            identifiers: Rc::new(HashMap::new()),
             def_identifiers: Rc::new(Vec::new()),
             all_defined_identifiers: Rc::new(HashMap::new()),
         }
@@ -764,8 +838,8 @@ impl VmBuilder {
     pub(super) fn build(self) -> Vm {
         Vm {
             nodes: self.nodes,
-            identifiers: Rc::try_unwrap(self.identifiers).unwrap(),
             def_identifiers: Rc::try_unwrap(self.def_identifiers).unwrap(),
+            identifiers: Rc::try_unwrap(self.all_defined_identifiers).unwrap(),
         }
     }
 
@@ -774,19 +848,16 @@ impl VmBuilder {
             return;
         }
 
-        Rc::get_mut(&mut self.all_defined_identifiers)
-            .unwrap()
-            .insert(key.clone(), id);
-
         if is_def {
             Rc::get_mut(&mut self.def_identifiers)
                 .unwrap()
                 .push((id, UniqueString::new(key.as_str())));
-            Rc::get_mut(&mut self.identifiers).unwrap().insert(key, id);
         }
+
+        Rc::get_mut(&mut self.all_defined_identifiers).unwrap().insert(key, (id, is_def));
     }
 
-    pub(super) fn get_identifier(&self, id: &str) -> Option<usize> {
+    pub(super) fn get_identifier(&self, id: &str) -> Option<(usize, bool)> {
         self.all_defined_identifiers.get(id).copied()
     }
 
@@ -801,17 +872,21 @@ impl VmBuilder {
     pub(super) fn from<'b>(&mut self, value: EbnfExpr, diagnostic: &mut Diagnostic) {
         match value {
             EbnfExpr::Identifier(s, info) => {
-                if let Some(id) = self.get_identifier(s.as_str()) {
-                    self.nodes.push(VmNode::Call(id as u16, s));
+                if NativeCallKind::is_valid_name(&s) {
+                    self.nodes.push(VmNode::NativeCall(NativeCallKind::from(s.as_str())));
                 } else {
-                    if let Some((info, span)) = info {
-                        diagnostic
-                            .builder()
-                            .report(DiagnosticLevel::Error, "Unknown identifier", info, None)
-                            .add_error(format!("Try defining '{s}'"), Some(span))
-                            .commit();
+                    if let Some((id, _)) = self.get_identifier(s.as_str()) {
+                        self.nodes.push(VmNode::Call(id as u16, s));
                     } else {
-                        panic!("Unknown identifier: {}", s);
+                        if let Some((info, span)) = info {
+                            diagnostic
+                                .builder()
+                                .report(DiagnosticLevel::Error, "Unknown identifier", info, None)
+                                .add_error(format!("Try defining '{s}'"), Some(span))
+                                .commit();
+                        } else {
+                            panic!("Unknown identifier: {}", s);
+                        }
                     }
                 }
             }
