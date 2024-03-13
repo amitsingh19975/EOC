@@ -4,6 +4,10 @@ use std::{io::Result, path::Path};
 use crate::eoc::utils::diagnostic::StreamingDiagnosticBag;
 
 fn main() -> Result<()> {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build_global()
+        .unwrap();
     let filepath = Path::new("source.eoc");
     let diagnostic = StreamingDiagnosticBag::new(Box::new(std::io::stderr()), filepath);
     let mut lexer = eoc::lexer::Lexer::new_from_filepath(filepath, diagnostic)?;

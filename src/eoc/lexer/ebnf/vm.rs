@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    rc::Rc,
+    rc::Rc, sync::mpsc::channel,
 };
 
 use crate::eoc::{
@@ -8,7 +8,7 @@ use crate::eoc::{
         str_utils::{get_utf8_char_len, ByteToCharIter},
         token::TokenKind,
     }, utils::{
-        diagnostic::{Diagnostic, DiagnosticLevel, DiagnosticReporter},
+        diagnostic::{Diagnostic, DiagnosticLevel},
         string::UniqueString,
     }
 };
@@ -29,7 +29,6 @@ impl Value {
     fn as_bool(&self) -> bool {
         match self {
             Value::Bool(b) => *b,
-            _ => panic!("Invalid value: {:?}", self),
         }
     }
 }
@@ -61,7 +60,7 @@ impl VmNode {
         state: &mut VmState,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) {
         let pc = state.pc;
         if pc >= vm.nodes.len() {
@@ -81,7 +80,7 @@ impl VmNode {
         state: &mut VmState,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> usize {
         let node = &vm.nodes[state.pc];
         state.next_pc();
@@ -411,7 +410,7 @@ impl Vm {
         &mut self,
         expr: EbnfExpr,
         _source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) {
         let mut builder = VmBuilder::new();
         builder.from(expr, diagnostic);
@@ -424,7 +423,7 @@ impl Vm {
         id: usize,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
 
         let mut state = VmState::new(id);
@@ -445,7 +444,7 @@ impl Vm {
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         if s.is_empty() {
             return None;
@@ -485,7 +484,7 @@ impl Vm {
         symbol: UniqueString,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<(&'b [u8], TokenKind)> {
         let key = symbol.as_str();
         match symbol {
@@ -539,7 +538,7 @@ impl Vm {
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         if s.is_empty() {
             return None;
@@ -663,7 +662,7 @@ impl EbnfMatcher for Vm {
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         if let Some((id, _)) = self
             .identifiers
@@ -680,7 +679,7 @@ impl EbnfMatcher for Vm {
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         if let Some((id, _)) = self
             .identifiers
@@ -698,7 +697,7 @@ impl EbnfMatcher for Vm {
         kind: super::native_call::NativeCallKind,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         if let Some((id, _)) = self.identifiers.get(kind.as_str()).copied() {
             self.run(id, s, source_manager, diagnostic)
@@ -712,7 +711,7 @@ impl EbnfMatcher for Vm {
         var: &str,
         s: &'a [u8],
         source_manager: RelativeSourceManager<'a>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'a [u8]> {
         if let Some((id, _)) = self.identifiers.get(var).copied() {
             self.run(id, s, source_manager, diagnostic)
@@ -725,26 +724,38 @@ impl EbnfMatcher for Vm {
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<(&'b [u8], crate::eoc::lexer::token::TokenKind)> {
-        for (k, symbol) in self.def_identifiers.iter().rev() {
-            if let Some((s, kind)) =
-            self.match_expr_helper(*k, symbol.clone(), s, source_manager, diagnostic)
-            {
-                if s.len() == 0 {
-                    return None;
-                }
-                return Some((s, kind));
+        let (tx, rx) = channel();
+        rayon::scope(|scope| {
+            for (k, symbol) in self.def_identifiers.iter().rev().copied() {
+                let tx = tx.clone();
+                scope.spawn(move |_| {
+                    if let Some((s, kind)) =
+                        self.match_expr_helper(k, symbol, s, source_manager, diagnostic)
+                    {
+                        tx.send(Some((k, s, kind))).unwrap();
+                    } else {
+                        tx.send(None).unwrap();
+                    }
+                });
+            }
+        });
+        let mut res = Vec::new();
+        for _ in 0..(self.def_identifiers.len()) {
+            if let Ok(Some((k, s, kind))) = rx.recv() {
+                res.push((k, s, kind));
             }
         }
-        None
+        res.sort_unstable_by_key(|(k, _, _)| *k);
+        res.pop().map(|(_, s, kind)| (s, kind))
     }
 
     fn is_binary_digit<'b>(
             &self,
             s: &'b [u8],
             source_manager: RelativeSourceManager<'b>,
-            diagnostic: &mut Diagnostic,
+            diagnostic: &Diagnostic,
         ) -> Option<char> {
         if let Some((id, true)) = self.identifiers.get(NATIVE_CALL_KIND_ID.is_binary_digit.as_ref()) {
             if let Some(s) = self.run(*id, s, source_manager, diagnostic) {
@@ -762,7 +773,7 @@ impl EbnfMatcher for Vm {
             &self,
             s: &'b [u8],
             source_manager: RelativeSourceManager<'b>,
-            diagnostic: &mut Diagnostic,
+            diagnostic: &Diagnostic,
         ) -> Option<char> {
         if let Some((id, true)) = self.identifiers.get(NATIVE_CALL_KIND_ID.is_digit.as_ref()) {
             if let Some(s) = self.run(*id, s, source_manager, diagnostic) {
@@ -780,7 +791,7 @@ impl EbnfMatcher for Vm {
             &self,
             s: &'b [u8],
             source_manager: RelativeSourceManager<'b>,
-            diagnostic: &mut Diagnostic,
+            diagnostic: &Diagnostic,
         ) -> Option<char> {
         if let Some((id, true)) = self.identifiers.get(NATIVE_CALL_KIND_ID.is_hex_digit.as_ref()) {
             if let Some(s) = self.run(*id, s, source_manager, diagnostic) {
@@ -798,7 +809,7 @@ impl EbnfMatcher for Vm {
             &self,
             s: &'b [u8],
             source_manager: RelativeSourceManager<'b>,
-            diagnostic: &mut Diagnostic,
+            diagnostic: &Diagnostic,
         ) -> Option<char> {
         if let Some((id, true)) = self.identifiers.get(NATIVE_CALL_KIND_ID.is_oct_digit.as_ref()) {
             if let Some(s) = self.run(*id, s, source_manager, diagnostic) {
@@ -862,7 +873,7 @@ impl VmBuilder {
         self.nodes.is_empty()
     }
 
-    pub(super) fn from<'b>(&mut self, value: EbnfExpr, diagnostic: &mut Diagnostic) {
+    pub(super) fn from<'b>(&mut self, value: EbnfExpr, diagnostic: &Diagnostic) {
         match value {
             EbnfExpr::Identifier(s, info) => {
                 if NativeCallKind::is_valid_name(&s) {
