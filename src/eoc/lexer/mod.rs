@@ -1486,17 +1486,28 @@ impl Lexer {
                     if level == 0 {
                         span.end -= 1;
                     }
+
                     tokens.push(Token::new(TokenKind::AngleContent, span));
                     if level == 0 {
                         let span = Span::new(span.end, span.end + 1);
                         tokens.push(Token::new(TokenKind::CloseAngle, span));
-                        self.next_char();
                     }
                 }
                 '>' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
-                    self.expect_block_or_paren(TokenKind::CloseAngle);
-                    tokens.push(Token::new(TokenKind::CloseAngle, span));
+                    self.diagnostics
+                        .builder()
+                        .report(
+                            DiagnosticLevel::Error,
+                            "misplaced '>'",
+                            self.source_manager.get_source_info(span),
+                            None,
+                        )
+                        .add_error(
+                            "try remove the this",
+                            Some(self.source_manager.fix_span(span)),
+                        )
+                        .commit();
                     self.next_char();
                 }
                 '?' => {
@@ -1623,6 +1634,11 @@ impl Lexer {
                 '!' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
                     tokens.push(Token::new(TokenKind::ExclamationMark, span));
+                    self.next_char();
+                }
+                '.' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    tokens.push(Token::new(TokenKind::Dot, span));
                     self.next_char();
                 }
                 _ => {
