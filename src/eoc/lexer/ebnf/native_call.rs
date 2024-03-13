@@ -13,7 +13,7 @@ use crate::eoc::{
     utils::{diagnostic::Diagnostic, string::UniqueString},
 };
 
-use super::{ast::RelativeSourceManager, matcher::{CustomEbnfParserMatcher, EbnfMatcher}, vm::Vm};
+use super::{ast::RelativeSourceManager, matcher::{DefaultEbnfParserMatcher, EbnfMatcher}, vm::Vm};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum NativeCallKind {
@@ -57,7 +57,7 @@ impl NativeCallKind {
 
     pub(super) fn call<'b>(
         &self,
-        matcher: &CustomEbnfParserMatcher,
+        matcher: &DefaultEbnfParserMatcher,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &mut Diagnostic,
@@ -71,14 +71,14 @@ impl NativeCallKind {
 
         match self {
             Self::StartIdentifier => {
-                if is_valid_identifier_start_code_point(c) {
+                if DefaultEbnfParserMatcher::is_valid_identifier_start_code_point(c) {
                     Some(&s[..c.len_utf8()])
                 } else {
                     None
                 }
             }
             Self::ContIdentifier => {
-                if is_valid_identifier_continuation_code_point(c) {
+                if DefaultEbnfParserMatcher::is_valid_identifier_continuation_code_point(c) {
                     Some(&s[..c.len_utf8()])
                 } else {
                     None
@@ -148,14 +148,14 @@ impl NativeCallKind {
                 }
             }
             Self::StartOperator => {
-                if Identifier::is_operator_start_code_point(c) {
+                if DefaultEbnfParserMatcher::is_operator_start_code_point(c) {
                     Some(&s[..c.len_utf8()])
                 } else {
                     None
                 }
             }
             Self::ContOperator => {
-                if Identifier::is_operator_continuation_code_point(c) {
+                if DefaultEbnfParserMatcher::is_operator_continuation_code_point(c) {
                     Some(&s[..c.len_utf8()])
                 } else {
                     None

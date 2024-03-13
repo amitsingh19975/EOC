@@ -2,7 +2,7 @@ use crate::eoc::{
     ast::identifier::Identifier,
     lexer::{
         number::{parse_floating_point, parse_integer},
-        str_utils::{get_utf8_char_len, ByteToCharIter},
+        str_utils::ByteToCharIter,
         token::TokenKind,
         utils::{
             is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point,
@@ -11,13 +11,12 @@ use crate::eoc::{
     utils::{
         diagnostic::{Diagnostic, DiagnosticReporter},
         span::Span,
-        string::UniqueString,
     },
 };
 
 use super::{
-    ast::{EbnfParserMatcherDef, EbnfParserMatcherEnv, RelativeSourceManager},
-    expr::{EbnfExpr, EbnfParserEnvVariable},
+    ast::RelativeSourceManager,
+    expr::EbnfExpr,
     native_call::{NativeCallKind, NATIVE_CALL_KIND_ID},
     vm::{Vm, VmBuilder},
 };
@@ -159,395 +158,6 @@ pub(crate) trait EbnfMatcher {
     }
 }
 
-pub(crate) struct CustomEbnfParserMatcher {
-    env: EbnfParserMatcherEnv,
-    def: EbnfParserMatcherDef,
-}
-
-impl CustomEbnfParserMatcher {
-    pub(crate) fn new() -> Self {
-        Self {
-            env: EbnfParserMatcherEnv::new(),
-            def: EbnfParserMatcherDef::new(),
-        }
-    }
-
-    fn add_identifier_env(&mut self, diagnostic: &mut Diagnostic) {
-        self.add_native_call(NativeCallKind::StartIdentifier);
-        self.add_native_call(NativeCallKind::ContIdentifier);
-        let rep_expr = EbnfExpr::Identifier(NativeCallKind::ContIdentifier.to_string(), None);
-        let expr = EbnfExpr::Concat(
-            vec![
-                EbnfExpr::Identifier(NativeCallKind::StartIdentifier.to_string(), None),
-                EbnfExpr::Repetition(Box::new(rep_expr), 1),
-            ],
-            1,
-        );
-
-        let statement = EbnfExpr::Variable {
-            name: "identifier".to_string(),
-            expr: Box::new(expr),
-            is_def: false,
-        };
-        let identifier = EbnfExpr::Statements(vec![statement], 1);
-        identifier.init_env(&mut self.env, &mut self.def, diagnostic);
-    }
-
-    fn add_operator_env(&mut self, diagnostic: &mut Diagnostic) {
-        self.add_native_call(NativeCallKind::StartOperator);
-        self.add_native_call(NativeCallKind::ContOperator);
-        let rep_expr = EbnfExpr::Identifier(NativeCallKind::ContOperator.to_string(), None);
-        let expr = EbnfExpr::Concat(
-            vec![
-                EbnfExpr::Identifier(NativeCallKind::StartOperator.to_string(), None),
-                EbnfExpr::Repetition(Box::new(rep_expr), 1),
-            ],
-            1,
-        );
-
-        let statement = EbnfExpr::Variable {
-            name: "operator".to_string(),
-            expr: Box::new(expr),
-            is_def: false,
-        };
-        let operator = EbnfExpr::Statements(vec![statement], 1);
-        operator.init_env(&mut self.env, &mut self.def, diagnostic);
-    }
-
-    pub(crate) fn init<'b>(
-        &mut self,
-        expr: EbnfExpr,
-        _source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) {
-        self.add_identifier_env(diagnostic);
-        self.add_operator_env(diagnostic);
-        self.add_native_call(NativeCallKind::Integer);
-        self.add_native_call(NativeCallKind::FloatingPoint);
-        self.add_native_call(NativeCallKind::Whitespace);
-        self.add_native_call(NativeCallKind::NewLine);
-        self.add_native_call(NativeCallKind::Tab);
-        self.add_native_call(NativeCallKind::Digit);
-        self.add_native_call(NativeCallKind::Letter);
-        self.add_native_call(NativeCallKind::HexDigit);
-        self.add_native_call(NativeCallKind::OctDigit);
-        self.add_native_call(NativeCallKind::BinDigit);
-        self.add_native_call(NativeCallKind::AlphaNumeric);
-        self.add_native_call(NativeCallKind::StartIdentifier);
-        self.add_native_call(NativeCallKind::ContIdentifier);
-        self.add_native_call(NativeCallKind::StartOperator);
-        self.add_native_call(NativeCallKind::ContOperator);
-
-        expr.init_env(&mut self.env, &mut self.def, diagnostic);
-        let keys = self.env.keys();
-        for key in keys {
-            if let Some(e) = self.env.remove(&key) {
-                let expr = e.recalculate_max_byte_len(&mut self.env);
-                self.env.insert(key, expr);
-            }
-        }
-        // for (name, value) in self.env.iter() {
-        //     println!("{}: {}", name, value);
-        // }
-        // println!(
-        //     "\ndef: {}",
-        //     self.def
-        //         .keys()
-        //         .map(|s| s.clone())
-        //         .collect::<Vec<_>>()
-        //         .join(",")
-        // );
-    }
-
-    fn add_native_call(&mut self, kind: NativeCallKind) {
-        self.env
-            .insert(kind.to_string(), EbnfParserEnvVariable::NativeCall(kind));
-    }
-
-    pub(crate) fn match_native_identifier<'b>(
-        &self,
-        s: &'b [u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<&'b [u8]> {
-        if s.is_empty() {
-            return None;
-        }
-
-        if self
-            .match_native(
-                NativeCallKind::StartIdentifier,
-                s,
-                source_manager,
-                diagnostic,
-            )
-            .is_none()
-        {
-            return None;
-        }
-
-        let mut i = get_utf8_char_len(s[0]);
-        while i < s.len() {
-            let end = get_utf8_char_len(s[i]);
-            let temp_source = &s[i..(i + end).min(s.len() - 1)];
-            if self
-                .match_native(
-                    NativeCallKind::ContIdentifier,
-                    temp_source,
-                    source_manager,
-                    diagnostic,
-                )
-                .is_none()
-            {
-                return Some(&s[..i]);
-            }
-            i += end;
-        }
-
-        Some(&s[..i])
-    }
-
-    pub(crate) fn match_native_operator<'b>(
-        &self,
-        s: &'b [u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<&'b [u8]> {
-        if s.is_empty() {
-            return None;
-        }
-        if self
-            .match_native(NativeCallKind::StartOperator, s, source_manager, diagnostic)
-            .is_none()
-        {
-            return None;
-        }
-
-        let mut i = get_utf8_char_len(s[0]);
-        while i < s.len() {
-            let end = get_utf8_char_len(s[i]);
-            let temp_source = &s[i..(i + end).min(s.len() - 1)];
-            if self
-                .match_native(
-                    NativeCallKind::ContOperator,
-                    temp_source,
-                    source_manager,
-                    diagnostic,
-                )
-                .is_none()
-            {
-                return Some(&s[..i]);
-            }
-            i += end;
-        }
-
-        Some(&s[..i])
-    }
-
-    fn match_expr_helper<'b>(
-        &self,
-        symbol: UniqueString,
-        expr: &EbnfParserEnvVariable,
-        s: &'b [u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<(&'b [u8], TokenKind)> {
-        let key = symbol.as_str();
-        match symbol {
-            u_str if u_str == NATIVE_CALL_KIND_ID.identifier_sym => {
-                let temp = if !self.contains_def(key) {
-                    self.match_native_identifier(s, source_manager, diagnostic)
-                        .map(|s| (s, TokenKind::Identifier))
-                } else {
-                    expr.match_expr(self, s, &self.env, source_manager, diagnostic)
-                        .map(|s| (s, TokenKind::Identifier))
-                };
-                temp
-            }
-            u_str if u_str == NATIVE_CALL_KIND_ID.operator_sym => {
-                let temp = if !self.contains_def(key) {
-                    self.match_native_operator(s, source_manager, diagnostic)
-                        .map(|s| (s, TokenKind::Operator))
-                } else {
-                    expr.match_expr(self, s, &self.env, source_manager, diagnostic)
-                        .map(|s| (s, TokenKind::Operator))
-                };
-                temp
-            }
-            u_str if u_str == NATIVE_CALL_KIND_ID.fp_sym => {
-                let temp = if !self.contains_def(key) {
-                    self.match_native_floating_point(s, source_manager, diagnostic)
-                        .map(|s| (s, TokenKind::FloatingPoint))
-                } else {
-                    expr.match_expr(self, s, &self.env, source_manager, diagnostic)
-                        .map(|s| (s, TokenKind::FloatingPoint))
-                };
-                temp
-            }
-            u_str if u_str == NATIVE_CALL_KIND_ID.integer_sym => {
-                let temp = if !self.contains_def(key) {
-                    self.match_native_integer(s, source_manager, diagnostic)
-                        .map(|s| (s, TokenKind::Integer))
-                } else {
-                    expr.match_expr(self, s, &self.env, source_manager, diagnostic)
-                        .map(|s| (s, TokenKind::Integer))
-                };
-                temp
-            }
-            _ => expr
-                .match_expr(self, s, &self.env, source_manager, diagnostic)
-                .map(|s| (s, TokenKind::CustomToken(symbol))),
-        }
-    }
-
-    pub(crate) fn try_match_native_if_exists<'b>(
-        &self,
-        kind: NativeCallKind,
-        s: &'b [u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<&'b [u8]> {
-        self.match_expr_for(kind.as_str(), s, source_manager, diagnostic)
-    }
-}
-
-impl EbnfMatcher for CustomEbnfParserMatcher {
-    fn match_operator<'b>(
-        &self,
-        s: &'b [u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<&'b [u8]> {
-        if let Some(expr) = self.env.get(NATIVE_CALL_KIND_ID.operator_sym.as_str()) {
-            self.match_expr_helper(
-                NATIVE_CALL_KIND_ID.operator_sym,
-                expr,
-                s,
-                source_manager,
-                diagnostic,
-            )
-            .map(|(s, _)| s)
-        } else {
-            self.match_native_operator(s, source_manager, diagnostic)
-        }
-    }
-
-    fn match_identifier<'b>(
-        &self,
-        s: &'b [u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<&'b [u8]> {
-        if let Some(expr) = self.env.get(NATIVE_CALL_KIND_ID.identifier_sym.as_str()) {
-            self.match_expr_helper(
-                NATIVE_CALL_KIND_ID.identifier_sym,
-                expr,
-                s,
-                source_manager,
-                diagnostic,
-            )
-            .map(|(s, _)| s)
-        } else {
-            self.match_native_identifier(s, source_manager, diagnostic)
-        }
-    }
-
-    fn match_native<'b>(
-        &self,
-        kind: NativeCallKind,
-        s: &'b [u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<&'b [u8]> {
-        if let Some(expr) = self.env.get(kind.as_str()) {
-            expr.match_expr(self, s, &self.env, source_manager, diagnostic)
-        } else {
-            kind.call(self, s, source_manager, diagnostic)
-        }
-    }
-
-    fn match_expr_for<'a>(
-        &self,
-        var: &str,
-        s: &'a [u8],
-        source_manager: RelativeSourceManager<'a>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<&'a [u8]> {
-        if let Some(expr) = self.env.get(var) {
-            let temp = expr.match_expr(self, s, &self.env, source_manager, diagnostic);
-            temp
-        } else {
-            None
-        }
-    }
-
-    fn try_match_expr<'b>(
-        &self,
-        s: &'b [u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<(&'b [u8], TokenKind)> {
-        for d in self.def.ordered_iter().rev() {
-            if let Some(expr) = self.env.get(d.as_str()) {
-                let temp = self.match_expr_helper(*d, expr, s, source_manager, diagnostic);
-
-                if temp.is_some() {
-                    return temp;
-                }
-            }
-        }
-        None
-    }
-
-    fn is_digit<'b>(
-        &self,
-        s: &[u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<char> {
-        self.match_native(NativeCallKind::Digit, s, source_manager, diagnostic)
-            .map(|s| ByteToCharIter::new(s).next())
-            .flatten()
-    }
-
-    fn is_hex_digit<'b>(
-        &self,
-        s: &[u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<char> {
-        self.match_native(NativeCallKind::HexDigit, s, source_manager, diagnostic)
-            .map(|s| ByteToCharIter::new(s).next())
-            .flatten()
-    }
-
-    fn is_oct_digit<'b>(
-        &self,
-        s: &[u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<char> {
-        self.match_native(NativeCallKind::OctDigit, s, source_manager, diagnostic)
-            .map(|s| ByteToCharIter::new(s).next())
-            .flatten()
-    }
-
-    fn is_binary_digit<'b>(
-        &self,
-        s: &[u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
-    ) -> Option<char> {
-        self.match_native(NativeCallKind::BinDigit, s, source_manager, diagnostic)
-            .map(|s| ByteToCharIter::new(s).next())
-            .flatten()
-    }
-
-    fn contains_def(&self, name: &str) -> bool {
-        self.def.contains(name)
-    }
-}
-
 pub(crate) struct DefaultEbnfParserMatcher;
 
 impl DefaultEbnfParserMatcher {
@@ -685,7 +295,7 @@ impl EbnfMatcher for DefaultEbnfParserMatcher {
         diagnostic: &mut Diagnostic,
     ) -> Option<&'b [u8]> {
         kind.call(
-            &CustomEbnfParserMatcher::new(),
+            &DefaultEbnfParserMatcher::new(),
             s,
             source_manager,
             diagnostic,
@@ -758,6 +368,7 @@ impl EbnfParserMatcher {
                     let mut m = VmBuilder::new();
                     m.from(expr, diagnostic);
                     let temp = m.build();
+                    temp.print();
                     *self = Self::Custom(temp);
                 }
             }

@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     slice::Iter
 };
 
@@ -18,7 +18,7 @@ use crate::eoc::{
     },
 };
 
-use super::expr::{EbnfExpr, EbnfParserEnvVariable, TerminalValue};
+use super::expr::{EbnfExpr, TerminalValue};
 
 #[derive(Clone, Copy)]
 pub(crate) struct RelativeSourceManager<'a>(&'a SourceManager, u32);
@@ -425,101 +425,6 @@ impl EbnfParserMatcherDef {
 
     pub(super) fn keys(&self) -> std::collections::hash_set::Iter<'_, &'static str> {
         self.0.iter()
-    }
-}
-
-pub(super) struct EbnfParserMatcherEnv{
-    hash: HashMap<String, EbnfParserEnvVariable>,
-    identifiers: Option<EbnfParserEnvVariable>,
-    operators: Option<EbnfParserEnvVariable>,
-    integer: Option<EbnfParserEnvVariable>,
-    floating_point: Option<EbnfParserEnvVariable>,
-}
-
-impl EbnfParserMatcherEnv {
-    pub(super) fn new() -> Self {
-        Self {
-            hash: HashMap::new(),
-            identifiers: None,
-            operators: None,
-            integer: None,
-            floating_point: None,
-        }
-    }
-
-    pub(super) fn keys(&self) -> Vec<String> {
-        let mut temp: Vec<_> = self.hash.keys().map(|s| s.to_owned()).collect();
-        if self.identifiers.is_some() {
-            temp.push("identifier".to_string());
-        }
-
-        if self.operators.is_some() {
-            temp.push("operator".to_string());
-        }
-
-        if self.integer.is_some() {
-            temp.push("integer".to_string());
-        }
-
-        if self.floating_point.is_some() {
-            temp.push("floating_point".to_string());
-        }
-
-        temp
-    }
-
-    pub(super) fn contains(&self, name: &str) -> bool {
-         match name {
-            "identifier" => self.identifiers.is_some(),
-            "operator" => self.operators.is_some(),
-            "integer" => self.integer.is_some(),
-            "floating_point" => self.floating_point.is_some(),
-            _ => self.hash.contains_key(name),
-        }
-    }
-
-    pub(super) fn insert(&mut self, name: String, value: EbnfParserEnvVariable) {
-        match name.as_str() {
-            "identifier" => self.identifiers = Some(value),
-            "operator" => self.operators = Some(value),
-            "integer" => self.integer = Some(value),
-            "floating_point" => self.floating_point = Some(value),
-            _ => {
-                self.hash.insert(name, value);
-            }
-        }
-    }
-
-    pub(super) fn remove(&mut self, name: &str) -> Option<EbnfParserEnvVariable> {
-        match name {
-            "identifier" => self.identifiers.take(),
-            "operator" => self.operators.take(),
-            "integer" => self.integer.take(),
-            "floating_point" => self.floating_point.take(),
-            _ => self.hash.remove(name),
-        }
-    }
-
-    pub(super) fn get(&self, name: &str) -> Option<&EbnfParserEnvVariable> {
-        match name {
-            "identifier" => self.identifiers.as_ref(),
-            "operator" => self.operators.as_ref(),
-            "integer" => self.integer.as_ref(),
-            "floating_point" => self.floating_point.as_ref(),
-            _ => self.hash.get(name),
-        }
-    }
-
-    fn get_from_unique_string(&self, name: &UniqueString) -> Option<&EbnfParserEnvVariable> {
-        self.get(name.as_str())
-    }
-
-    fn insert_unique_string(&mut self, name: UniqueString, value: EbnfParserEnvVariable) {
-        self.insert(name.as_str().to_string(), value);
-    }
-
-    fn contains_key(&self, name: &UniqueString) -> bool {
-        self.contains(name.as_str())
     }
 }
 
