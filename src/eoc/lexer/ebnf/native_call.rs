@@ -60,7 +60,7 @@ impl NativeCallKind {
         matcher: &DefaultEbnfParserMatcher,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         let c = ByteToCharIter::new(s).next();
         if c.is_none() {
@@ -180,7 +180,7 @@ impl NativeCallKind {
         vm: &Vm,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         let c = ByteToCharIter::new(s).next();
         if c.is_none() {

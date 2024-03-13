@@ -2,6 +2,7 @@
 
 use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock, RwLockWriteGuard};
 
 use super::source_manager::SourceManagerDiagnosticInfo;
 use super::span::Span;
@@ -302,14 +303,9 @@ impl DiagnosticBase {
     }
 }
 
-enum DiagnosticBuilderBase<'a> {
-    Bag(&'a mut DiagnosticBag),
-    Stream(&'a mut StreamingDiagnosticBag),
-}
-
 pub(crate) struct DiagnosticBuilder<'a> {
     inner: Option<DiagnosticBase>,
-    base: DiagnosticBuilderBase<'a>
+    base: RwLockWriteGuard<'a, DiagnosticInner>
 }
 
 impl<'a> DiagnosticBuilder<'a> {
@@ -354,10 +350,7 @@ impl<'a> DiagnosticBuilder<'a> {
 
     pub(crate) fn commit(&mut self) {
         let inner = self.inner.take().expect("DiagnosticBuilder::finish called without a message!");
-        match &mut self.base {
-            DiagnosticBuilderBase::Bag(b) => b.add_message(inner),
-            DiagnosticBuilderBase::Stream(b) => b.add_message(inner),
-        }
+        self.base.add_message(inner);
     }
 }
 
@@ -365,7 +358,6 @@ pub trait DiagnosticReporter {
     fn add_message(&mut self, message: DiagnosticBase);
     fn get_filepath(&self) -> &Path;
     fn has_error(&self) -> bool;
-    fn builder(&mut self) -> DiagnosticBuilder;
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -396,13 +388,6 @@ impl DiagnosticReporter for DiagnosticBag {
         &self.filepath
     }
 
-    fn builder(&mut self) -> DiagnosticBuilder {
-        DiagnosticBuilder {
-            inner: None,
-            base: DiagnosticBuilderBase::Bag(self),
-        }
-    }
-
     fn has_error(&self) -> bool {
         self.messages.iter().any(|m| m.has_error)
     }
@@ -417,8 +402,12 @@ impl Display for DiagnosticBag {
     }
 }
 
-pub struct StreamingDiagnosticBag {
+struct StreamingDiagnosticBagInner {
     writer: Box<dyn std::io::Write>,
+}
+
+pub struct StreamingDiagnosticBag {
+    inner: Arc<RwLock<StreamingDiagnosticBagInner>>,
     filepath: PathBuf,
     has_error: bool,
 }
@@ -426,7 +415,9 @@ pub struct StreamingDiagnosticBag {
 impl StreamingDiagnosticBag {
     pub fn new<P: AsRef<Path>>(writer: Box<dyn std::io::Write>, filepath: P) -> Self {
         Self {
-            writer,
+            inner: Arc::new(RwLock::new(StreamingDiagnosticBagInner {
+                writer,
+            })),
             filepath: filepath.as_ref().to_path_buf(),
             has_error: false,
         }
@@ -437,23 +428,19 @@ impl StreamingDiagnosticBag {
     }
 }
 
+unsafe impl Send for StreamingDiagnosticBag {}
+unsafe impl Sync for StreamingDiagnosticBag {}
+
 impl DiagnosticReporter for StreamingDiagnosticBag {
     fn add_message(&mut self, message: DiagnosticBase) {
+        let mut self_ = self.inner.write().unwrap();
         self.has_error = message.has_error;
         let path = self.get_filepath().to_path_buf();
-        let mut writer = &mut self.writer;
-        print_message_io(&message, &path, &mut writer, is_redirecting()).unwrap();
+        print_message_io(&message, &path, &mut self_.writer, is_redirecting()).unwrap();
     }
 
     fn get_filepath(&self) -> &Path {
         &self.filepath
-    }
-
-    fn builder(&mut self) -> DiagnosticBuilder {
-        DiagnosticBuilder {
-            inner: None,
-            base: DiagnosticBuilderBase::Stream(self),
-        }
     }
 
     fn has_error(&self) -> bool {
@@ -461,10 +448,14 @@ impl DiagnosticReporter for StreamingDiagnosticBag {
     }
 }
 
-pub enum Diagnostic {
+enum DiagnosticInner {
     Stream(StreamingDiagnosticBag),
     Bag(DiagnosticBag),
 }
+
+pub struct Diagnostic {
+    inner: Arc<RwLock<DiagnosticInner>>,
+} 
 
 impl Display for StreamingDiagnosticBag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -475,52 +466,82 @@ impl Display for StreamingDiagnosticBag {
     }
 }
 
-impl Display for Diagnostic {
+impl Display for DiagnosticInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Diagnostic::Stream(s) => s.fmt(f),
-            Diagnostic::Bag(b) => b.fmt(f),
+            Self::Stream(s) => s.fmt(f),
+            Self::Bag(b) => b.fmt(f),
         }
     }
 }
 
-impl DiagnosticReporter for Diagnostic {
+impl DiagnosticReporter for DiagnosticInner {
     fn add_message(&mut self, message: DiagnosticBase) {
         match self {
-            Diagnostic::Stream(s) => s.add_message(message),
-            Diagnostic::Bag(b) => b.add_message(message),
+            Self::Stream(s) => s.add_message(message),
+            Self::Bag(b) => b.add_message(message),
         }
     }
 
     fn get_filepath(&self) -> &Path {
         match self {
-            Diagnostic::Stream(s) => s.get_filepath(),
-            Diagnostic::Bag(b) => b.get_filepath(),
+            Self::Stream(s) => s.get_filepath(),
+            Self::Bag(b) => b.get_filepath(),
         }
     }
 
-    fn builder(&mut self) -> DiagnosticBuilder {
-        match self {
-            Diagnostic::Stream(s) => s.builder(),
-            Diagnostic::Bag(b) => b.builder(),
-        }
-    }
     fn has_error(&self) -> bool {
         match self {
-            Diagnostic::Stream(s) => s.has_error(),
-            Diagnostic::Bag(b) => b.has_error(),
+            Self::Stream(s) => s.has_error(),
+            Self::Bag(b) => b.has_error(),
         }
     }
 }
 
 impl From<StreamingDiagnosticBag> for Diagnostic {
     fn from(stream: StreamingDiagnosticBag) -> Self {
-        Diagnostic::Stream(stream)
+        Diagnostic {
+            inner: Arc::new(RwLock::new(DiagnosticInner::Stream(stream))),
+        }
     }
 }
 
 impl From<DiagnosticBag> for Diagnostic {
     fn from(bag: DiagnosticBag) -> Self {
-        Diagnostic::Bag(bag)
+        Diagnostic {
+            inner: Arc::new(RwLock::new(DiagnosticInner::Bag(bag))),
+        }
+    }
+}
+
+
+impl Diagnostic {
+    pub(crate) fn add_message(&self, message: DiagnosticBase) {
+        let mut inner = self.inner.write().unwrap();
+        inner.add_message(message);
+    }
+
+    pub(crate) fn get_filepath(&self) -> PathBuf {
+        let inner = self.inner.read().unwrap();
+        inner.get_filepath().to_path_buf()
+    }
+
+    pub(crate) fn builder(&self) -> DiagnosticBuilder {
+        let inner = self.inner.write().unwrap();
+        DiagnosticBuilder {
+            inner: None,
+            base: inner,
+        }
+    }
+    pub(crate) fn has_error(&self) -> bool {
+        let inner = self.inner.read().unwrap();
+        inner.has_error()
+    }
+}
+
+impl Display for Diagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let inner = self.inner.read().unwrap();
+        inner.fmt(f)
     }
 }

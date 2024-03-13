@@ -1,5 +1,5 @@
 use crate::eoc::utils::{
-    diagnostic::{Diagnostic, DiagnosticLevel, DiagnosticReporter},
+    diagnostic::{Diagnostic, DiagnosticLevel},
     span::Span,
 };
 
@@ -12,13 +12,13 @@ pub(crate) fn parse_integer<'b, D, H, O, B>(
     get_oct_digit: O,
     get_binary_digit: B,
     source_manager: RelativeSourceManager<'b>,
-    diagnostic: &mut Diagnostic,
+    diagnostic: &Diagnostic,
 ) -> Option<&'b [u8]>
 where
-    D: Fn(&'b [u8], RelativeSourceManager<'b>, &mut Diagnostic) -> Option<char>,
-    H: Fn(&'b [u8], RelativeSourceManager<'b>, &mut Diagnostic) -> Option<char>,
-    O: Fn(&'b [u8], RelativeSourceManager<'b>, &mut Diagnostic) -> Option<char>,
-    B: Fn(&'b [u8], RelativeSourceManager<'b>, &mut Diagnostic) -> Option<char>,
+    D: Fn(&'b [u8], RelativeSourceManager<'b>, &Diagnostic) -> Option<char>,
+    H: Fn(&'b [u8], RelativeSourceManager<'b>, &Diagnostic) -> Option<char>,
+    O: Fn(&'b [u8], RelativeSourceManager<'b>, &Diagnostic) -> Option<char>,
+    B: Fn(&'b [u8], RelativeSourceManager<'b>, &Diagnostic) -> Option<char>,
 {
     if s.is_empty() {
         return None;
@@ -207,11 +207,11 @@ pub(crate) fn parse_floating_point<'b, D, H>(
     get_digit: D,
     get_hex_digit: H,
     source_manager: RelativeSourceManager<'b>,
-    diagnostic: &mut Diagnostic,
+    diagnostic: &Diagnostic,
 ) -> Option<&'b [u8]>
 where
-    D: Fn(&'b [u8], RelativeSourceManager<'b>, &mut Diagnostic) -> Option<char>,
-    H: Fn(&'b [u8], RelativeSourceManager<'b>, &mut Diagnostic) -> Option<char>,
+    D: Fn(&'b [u8], RelativeSourceManager<'b>, &Diagnostic) -> Option<char>,
+    H: Fn(&'b [u8], RelativeSourceManager<'b>, &Diagnostic) -> Option<char>,
 {
     if s.is_empty() {
         return None;

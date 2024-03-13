@@ -3,7 +3,7 @@
 use crate::eoc::{
     lexer::token::{Token, TokenKind},
     utils::{
-        diagnostic::{Diagnostic, DiagnosticLevel, DiagnosticReporter},
+        diagnostic::{Diagnostic, DiagnosticLevel},
         source_manager::SourceManager,
         span::Span,
     },

@@ -16,7 +16,7 @@ use self::{
 use super::{
     ast::identifier::Identifier,
     utils::{
-        diagnostic::{Diagnostic, DiagnosticLevel, DiagnosticReporter}, source_manager::SourceManager, span::Span, string::UniqueString, trie::Trie
+        diagnostic::{Diagnostic, DiagnosticLevel}, source_manager::SourceManager, span::Span, string::UniqueString, trie::Trie
     },
 };
 use std::{
@@ -55,7 +55,7 @@ pub(crate) struct Lexer {
     custom_keywords_trie: Trie<u8, usize>,
     rewind_stack: Vec<usize>,
     block_lexer_matcher: HashMap<UniqueString, EbnfParserMatcher>,
-    mode: LexerMode,
+    mode: LexerMode
 }
 
 impl Lexer {
@@ -71,7 +71,7 @@ impl Lexer {
             custom_operators_trie: Trie::new(),
             custom_keywords_trie: Trie::new(),
             block_lexer_matcher: HashMap::new(),
-            mode: LexerMode::Normal,
+            mode: LexerMode::Normal
         }
     }
 
@@ -1170,7 +1170,7 @@ impl Lexer {
             if let Some((matched, kind)) = matcher.try_match_expr(
                 &self.source_manager.get_source()[self.cursor..],
                 RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
-                &mut self.diagnostics,
+                &mut self.diagnostics
             ) {
                 let end = self.cursor + matched.len();
                 let span = Span::from_usize(self.cursor, end);

@@ -9,7 +9,7 @@ use crate::eoc::{
         },
     },
     utils::{
-        diagnostic::{Diagnostic, DiagnosticReporter},
+        diagnostic::Diagnostic,
         span::Span,
     },
 };
@@ -26,7 +26,7 @@ pub(crate) trait EbnfMatcher {
         &self,
         s: &'b [u8],
         _source_manager: RelativeSourceManager<'b>,
-        _diagnostic: &mut Diagnostic,
+        _diagnostic: &Diagnostic,
     ) -> Option<char> {
         ByteToCharIter::new(s).next().filter(|c| c.is_ascii_digit())
     }
@@ -35,7 +35,7 @@ pub(crate) trait EbnfMatcher {
         &self,
         s: &'b [u8],
         _source_manager: RelativeSourceManager<'b>,
-        _diagnostic: &mut Diagnostic,
+        _diagnostic: &Diagnostic,
     ) -> Option<char> {
         ByteToCharIter::new(s)
             .next()
@@ -46,7 +46,7 @@ pub(crate) trait EbnfMatcher {
         &self,
         s: &'b [u8],
         _source_manager: RelativeSourceManager<'b>,
-        _diagnostic: &mut Diagnostic,
+        _diagnostic: &Diagnostic,
     ) -> Option<char> {
         ByteToCharIter::new(s)
             .next()
@@ -57,7 +57,7 @@ pub(crate) trait EbnfMatcher {
         &self,
         s: &'b [u8],
         _source_manager: RelativeSourceManager<'b>,
-        _diagnostic: &mut Diagnostic,
+        _diagnostic: &Diagnostic,
     ) -> Option<char> {
         ByteToCharIter::new(s)
             .next()
@@ -72,7 +72,7 @@ pub(crate) trait EbnfMatcher {
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         parse_integer(
             s,
@@ -89,7 +89,7 @@ pub(crate) trait EbnfMatcher {
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         parse_floating_point(
             s,
@@ -104,14 +104,14 @@ pub(crate) trait EbnfMatcher {
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]>;
 
     fn match_identifier<'b>(
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]>;
 
     fn match_native<'b>(
@@ -119,7 +119,7 @@ pub(crate) trait EbnfMatcher {
         kind: NativeCallKind,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]>;
 
     fn match_expr_for<'a>(
@@ -127,14 +127,14 @@ pub(crate) trait EbnfMatcher {
         var: &str,
         s: &'a [u8],
         source_manager: RelativeSourceManager<'a>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'a [u8]>;
 
     fn try_match_expr<'b>(
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<(&'b [u8], TokenKind)>;
 
     fn has_custom_digit_lexing(&self) -> bool {
@@ -185,7 +185,7 @@ impl DefaultEbnfParserMatcher {
         &self,
         s: &'b [u8],
         _source_manager: RelativeSourceManager<'b>,
-        _diagnostic: &mut Diagnostic,
+        _diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         if s.is_empty() {
             return None;
@@ -224,7 +224,7 @@ impl DefaultEbnfParserMatcher {
         &self,
         s: &'b [u8],
         _source_manager: RelativeSourceManager<'b>,
-        _diagnostic: &mut Diagnostic,
+        _diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         if s.is_empty() {
             return None;
@@ -262,7 +262,7 @@ impl DefaultEbnfParserMatcher {
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         self.match_native_identifier(s, source_manager, diagnostic)
     }
@@ -273,7 +273,7 @@ impl EbnfMatcher for DefaultEbnfParserMatcher {
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         self.match_native_operator(s, source_manager, diagnostic)
     }
@@ -282,7 +282,7 @@ impl EbnfMatcher for DefaultEbnfParserMatcher {
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         self.match_native_identifier(s, source_manager, diagnostic)
     }
@@ -292,7 +292,7 @@ impl EbnfMatcher for DefaultEbnfParserMatcher {
         kind: NativeCallKind,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         kind.call(
             &DefaultEbnfParserMatcher::new(),
@@ -307,7 +307,7 @@ impl EbnfMatcher for DefaultEbnfParserMatcher {
         var: &str,
         s: &'a [u8],
         source_manager: RelativeSourceManager<'a>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'a [u8]> {
         match var {
             _ if var == NATIVE_CALL_KIND_ID.identifier_sym => {
@@ -330,7 +330,7 @@ impl EbnfMatcher for DefaultEbnfParserMatcher {
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<(&'b [u8], TokenKind)> {
         for k in &[
             NATIVE_CALL_KIND_ID.identifier_sym,
@@ -356,7 +356,7 @@ impl EbnfParserMatcher {
         &mut self,
         expr: Option<EbnfExpr>,
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) {
         if let Some(expr) = expr {
             if expr.is_empty() {
@@ -368,7 +368,6 @@ impl EbnfParserMatcher {
                     let mut m = VmBuilder::new();
                     m.from(expr, diagnostic);
                     let temp = m.build();
-                    temp.print();
                     *self = Self::Custom(temp);
                 }
             }
@@ -390,7 +389,7 @@ impl EbnfParserMatcher {
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<(&'b [u8], TokenKind)> {
         match self {
             Self::Custom(m) => m.try_match_expr(s, source_manager, diagnostic),
@@ -403,7 +402,7 @@ impl EbnfParserMatcher {
         var: &str,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         match self {
             Self::Custom(m) => m.match_expr_for(var, s, source_manager, diagnostic),
@@ -415,7 +414,7 @@ impl EbnfParserMatcher {
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         match self {
             Self::Custom(m) => m.match_identifier(s, source_manager, diagnostic),
@@ -427,7 +426,7 @@ impl EbnfParserMatcher {
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         match self {
             Self::Custom(m) => m.match_operator(s, source_manager, diagnostic),
@@ -440,7 +439,7 @@ impl EbnfParserMatcher {
         kind: NativeCallKind,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         match self {
             Self::Custom(m) => m.match_native(kind, s, source_manager, diagnostic),
@@ -554,7 +553,7 @@ impl IREbnfParserMatcher {
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<(&'b [u8], TokenKind)> {
         let def = DefaultEbnfParserMatcher::new();
         if let Some(s) = def.match_native_integer(s, source_manager, diagnostic) {
@@ -576,7 +575,7 @@ impl IREbnfParserMatcher {
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         if s.is_empty() {
             return None;
@@ -659,7 +658,7 @@ impl IREbnfParserMatcher {
         &self,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         if s.is_empty() {
             return None;

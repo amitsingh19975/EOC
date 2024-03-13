@@ -12,7 +12,7 @@ use crate::eoc::{
         utils::ParenMatching
     },
     utils::{
-        diagnostic::{Diagnostic, DiagnosticLevel, DiagnosticReporter},
+        diagnostic::{Diagnostic, DiagnosticLevel},
         source_manager::{SourceManager, SourceManagerDiagnosticInfo},
         span::Span, string::UniqueString,
     },
@@ -43,7 +43,7 @@ impl<'a> RelativeSourceManager<'a> {
 
 pub(crate) struct EbnfParser<'a> {
     source_manager: &'a SourceManager,
-    diagnostic: &'a mut Diagnostic,
+    diagnostic: &'a Diagnostic,
     tokens: Vec<Token>,
     cursor: usize,
 }
@@ -52,7 +52,7 @@ impl<'a> EbnfParser<'a> {
     pub(crate) fn parse(
         tokens: Vec<Token>,
         source_manager: &SourceManager,
-        diagnostic: &mut Diagnostic,
+        diagnostic: &Diagnostic,
     ) -> EbnfExpr {
         let mut parser = EbnfParser {
             source_manager,
