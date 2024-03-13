@@ -490,12 +490,6 @@ impl IREbnfParserMatcher {
     }
 
     pub(crate) fn is_valid_identifier_start_code_point(c: char) -> bool {
-        // Identifiers
-        // bare-id ::= (letter|[_]) (letter|digit|[_$.])*
-        // suffix-id ::= (digit+ | ((letter|id-punct) (letter|id-punct|digit)*))
-        // value-id ::= `%` suffix-id
-        // id-punct  ::= [$._-]
-
         match c {
             'a'..='z' | 'A'..='Z' | '_' | '%' | '@' => true,
             _ => false,
@@ -504,7 +498,7 @@ impl IREbnfParserMatcher {
 
     pub(crate) fn is_valid_identifier_continuation_code_point(c: char) -> bool {
         match c {
-            'a'..='z' | 'A'..='Z' | '_' | '$' | '.' | '0'..='9' | '-' => true,
+            'a'..='z' | 'A'..='Z' | '_' | '$' | '0'..='9' | '-' => true,
             _ => false,
         }
     }
