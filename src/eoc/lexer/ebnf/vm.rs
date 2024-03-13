@@ -92,14 +92,12 @@ impl VmNode {
             return;
         }
         
-        #[cfg(debug_assertions)]
-        state.call_stack.push(pc);
+        state.push_call_stack(pc);
 
         let off = Self::exec_helper(vm, state, s, source_manager, diagnostic);
         state.pc = (pc + off).min(vm.nodes.len() - 1);
         
-        #[cfg(debug_assertions)]
-        state.call_stack.pop();
+        state.pop_call_stack();
     }
 
     fn exec_helper<'b>(
@@ -396,6 +394,25 @@ impl VmState {
         }
         println!("========================================\n");
     }
+
+    #[cfg(not(debug_assertions))]
+    fn print_call_stack(&self, _vm: &Vm) {}
+
+    #[cfg(debug_assertions)]
+    fn push_call_stack(&mut self, id: usize) {
+        self.call_stack.push(id);
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn push_call_stack(&mut self, _id: usize) {}
+    
+    #[cfg(debug_assertions)]
+    fn pop_call_stack(&mut self) {
+        self.call_stack.pop();
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn pop_call_stack(&mut self) {}
 }
 
 #[derive(Debug, Clone)]
