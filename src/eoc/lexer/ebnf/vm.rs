@@ -23,36 +23,12 @@ use super::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Value {
     Bool(bool),
-    Char(char),
-    U8(u8),
-    U16(u16),
 }
 
 impl Value {
     fn as_bool(&self) -> bool {
         match self {
             Value::Bool(b) => *b,
-            _ => panic!("Invalid value: {:?}", self),
-        }
-    }
-
-    fn as_char(&self) -> char {
-        match self {
-            Value::Char(c) => *c,
-            _ => panic!("Invalid value: {:?}", self),
-        }
-    }
-
-    fn as_u8(&self) -> u8 {
-        match self {
-            Value::U8(u) => *u,
-            _ => panic!("Invalid value: {:?}", self),
-        }
-    }
-
-    fn as_u16(&self) -> u16 {
-        match self {
-            Value::U16(u) => *u,
             _ => panic!("Invalid value: {:?}", self),
         }
     }
