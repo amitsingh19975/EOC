@@ -57,13 +57,9 @@ where
 
     let mut matched = s;
 
-    let ch = get_digit(matched, source_manager, diagnostic);
-
-    if ch.is_none() {
+    let Some(ch) = get_digit(matched, source_manager, diagnostic) else {
         return None;
-    }
-
-    let ch = ch.unwrap();
+    };
 
     let is_start_with_zero = ch == '0';
 
@@ -221,24 +217,17 @@ where
     let mut end = 0usize;
     let mut matched = s;
 
-    let ch = iter.peek();
-    if ch.is_none() {
+    let Some(ch) = iter.peek().copied() else {
         return None;
-    }
+    };
 
-    let ch = unsafe { *ch.unwrap_unchecked() };
-
-    let ch = match (get_digit(matched, source_manager, diagnostic), ch) {
+    let Some(ch) = (match (get_digit(matched, source_manager, diagnostic), ch) {
         (_, '.') => Some('.'),
         (Some(ch), _) => Some(ch),
         _ => None,
-    };
-
-    if ch.is_none() {
+    }) else {
         return None;
-    }
-
-    let ch = unsafe { ch.unwrap_unchecked() };
+    };
 
     let is_start_with_zero = ch == '0';
     end += ch.len_utf8();

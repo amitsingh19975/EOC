@@ -133,12 +133,10 @@ impl Lexer {
     }
 
     fn skip_whitespace(&mut self) -> Option<Token> {
-        let ch = self.peek_char();
-        if ch.is_none() {
-            return None;
-        }
+        let Some(ch) = self.peek_char() else {
+            return None
+        };
 
-        let ch = unsafe { ch.unwrap_unchecked() };
         let temp = match ch {
             '\n' | '\r' => {
                 let span = self.skip_while(|byte| (byte == '\n') || (byte == '\r'));
@@ -346,8 +344,7 @@ impl Lexer {
         let mut format_tokens = Vec::new();
 
         loop {
-            let ch = self.peek_char();
-            if ch.is_none() {
+            let Some(ch) = self.peek_char() else {
                 let info = self.source_manager.get_source_info(start_quote_span);
                 self.diagnostics
                     .builder()
@@ -358,9 +355,7 @@ impl Lexer {
                     )
                     .commit();
                 break;
-            }
-
-            let ch = unsafe { ch.unwrap_unchecked() };
+            };
 
             if ch == '{' {
                 let end = self.cursor;
@@ -517,8 +512,7 @@ impl Lexer {
         let mut end = self.cursor;
 
         loop {
-            let ch = self.peek_char();
-            if ch.is_none() {
+            let Some(ch) = self.peek_char() else {
                 let info = self
                     .source_manager
                     .get_source_info(Span::from_usize(start, end));
@@ -536,9 +530,7 @@ impl Lexer {
                     )
                     .commit();
                 break;
-            }
-
-            let ch = unsafe { ch.unwrap_unchecked() };
+            };
 
             if ch == '\'' && !is_escaping {
                 end = self.cursor;
@@ -623,8 +615,7 @@ impl Lexer {
                 break;
             }
 
-            let ch = self.peek_char();
-            if ch.is_none() {
+            let Some(ch) = self.peek_char() else {
                 let info = self
                     .source_manager
                     .get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
@@ -645,9 +636,7 @@ impl Lexer {
                     )
                     .commit();
                 break;
-            }
-
-            let ch = unsafe { ch.unwrap_unchecked() };
+            };
 
             if ch == '/' {
                 self.next_char();
@@ -691,12 +680,9 @@ impl Lexer {
         }
 
         self.next_char();
-        let ch = self.peek_char();
-        if ch.is_none() {
+        let Some(ch) = self.peek_char() else {
             return;
-        }
-
-        let ch = unsafe { ch.unwrap_unchecked() };
+        };
 
         if ch == '/' {
             self.next_char();
@@ -712,13 +698,9 @@ impl Lexer {
             return false;
         }
 
-        let next = self.peek_char();
-
-        if next.is_none() {
+        let Some(next) = self.peek_char() else {
             return false;
-        }
-
-        let next = unsafe { next.unwrap_unchecked() };
+        };
 
         next == '/' || next == '*'
     }
@@ -829,8 +811,7 @@ impl Lexer {
     fn skip_while_code_block_end(&mut self, start: usize) -> Span {
         self.cursor = start;
         loop {
-            let ch = self.peek_char();
-            if ch.is_none() {
+            let Some(ch) = self.peek_char() else {
                 self.diagnostics
                     .builder()
                     .report(
@@ -849,9 +830,7 @@ impl Lexer {
                     )
                     .commit();
                 break;
-            }
-
-            let ch = unsafe { ch.unwrap_unchecked() };
+            };
 
             if ch == '`'
                 && ParenMatching::is_triple_back_tick_block(
@@ -1142,16 +1121,12 @@ impl Lexer {
                 tokens.extend(temp_tokens);
             }
 
-            let ch = self.peek_char();
-
-            if ch.is_none() {
+            let Some(ch) = self.peek_char() else {
                 if until.is_empty() {
                     tokens.push(Token::new_eof(Span::from_usize(self.cursor, self.cursor)));
                 }
                 break;
-            }
-
-            let ch = unsafe { ch.unwrap_unchecked() };
+            };
 
             if ch.is_ascii_whitespace() {
                 self.skip_whitespace().map(|token| tokens.push(token));
@@ -1371,14 +1346,8 @@ impl Lexer {
         }
 
         loop {
-            let ch = self.peek_char();
-
-            if ch.is_none() {
+            let Some(ch) = self.peek_char() else {
                 break;
-            }
-
-            let ch = unsafe {
-                ch.unwrap_unchecked()
             };
 
             if ch.is_ascii_whitespace() {
@@ -1484,8 +1453,7 @@ impl Lexer {
                     let mut span = Span::from_usize(self.cursor, self.cursor + 1);
                     let mut last_open_angle = self.cursor;
                     while level > 0 {
-                        let ch = self.peek_char();
-                        if ch.is_none() {
+                        let Some(ch) = self.peek_char() else {
                             let temp_span = Span::from_usize(last_open_angle, last_open_angle + 1);
                             let info = self.source_manager.get_source_info(temp_span);
                             let content_span = Span::from_usize(last_open_angle + 1, self.cursor);
@@ -1503,8 +1471,8 @@ impl Lexer {
                                 )
                                 .commit();
                             break;
-                        }
-                        let ch = unsafe { ch.unwrap_unchecked() };
+                        };
+
                         if ch == '<' {
                             last_open_angle = self.cursor;
                             level += 1;
@@ -1763,12 +1731,9 @@ impl Lexer {
         }
 
         loop {
-            let ch = self.peek_char();
-            if ch.is_none() {
+            let Some(ch) = self.peek_char() else {
                 break;
-            }
-
-            let ch = unsafe { ch.unwrap_unchecked() };
+            };
 
             if ch.is_ascii_whitespace() {
                 self.skip_whitespace().map(|token| tokens.push(token));
@@ -1954,12 +1919,9 @@ impl Lexer {
         }
 
         loop {
-            let ch = self.peek_char();
-            if ch.is_none() {
+            let Some(ch) = self.peek_char() else {
                 break;
-            }
-
-            let ch = unsafe { ch.unwrap_unchecked() };
+            };
 
             if ch.is_ascii_whitespace() {
                 self.skip_whitespace().map(|token| tokens.push(token));

@@ -193,12 +193,9 @@ impl DefaultEbnfParserMatcher {
 
         let mut iter = ByteToCharIter::new(s);
 
-        let c = iter.next();
-        if c.is_none() {
+        let Some(c) = iter.next() else {
             return None;
-        }
-
-        let c = c.unwrap();
+        };
 
         if !Self::is_valid_identifier_start_code_point(c) {
             return None;
@@ -232,12 +229,9 @@ impl DefaultEbnfParserMatcher {
 
         let mut iter = ByteToCharIter::new(s);
 
-        let c = iter.next();
-        if c.is_none() {
+        let Some(c) = iter.next() else {
             return None;
-        }
-
-        let c = c.unwrap();
+        };
 
         if !Self::is_operator_start_code_point(c) {
             return None;
@@ -522,12 +516,9 @@ impl IREbnfParserMatcher {
 
         let mut iter = ByteToCharIter::new(s);
 
-        let c = iter.next();
-        if c.is_none() {
+        let Some(c) = iter.next() else {
             return None;
-        }
-
-        let c = c.unwrap();
+        };
 
         if !Self::is_valid_identifier_start_code_point(c) {
             return None;
@@ -583,12 +574,10 @@ impl IREbnfParserMatcher {
 
         let mut iter = ByteToCharIter::new(s);
 
-        let c = iter.next();
-        if c.is_none() {
+        let Some(c) = iter.next() else {
             return None;
-        }
-
-        let c = c.unwrap();
+        };
+        
         if c != '"' {
             return None;
         }
@@ -598,11 +587,9 @@ impl IREbnfParserMatcher {
         let mut is_escaping = false;
 
         while i < s.len() {
-            let c = iter.next();
-            if c.is_none() {
+            let Some(c) = iter.next() else {
                 break;
-            }
-            let c = c.unwrap();
+            };
 
             if c == '\\' {
                 is_escaping = !is_escaping;
@@ -666,12 +653,9 @@ impl IREbnfParserMatcher {
 
         let mut iter = ByteToCharIter::new(s);
 
-        let c = iter.next();
-        if c.is_none() {
+        let Some(c) = iter.next() else {
             return None;
-        }
-
-        let c = c.unwrap();
+        };
 
         if c != '\'' {
             return None;
@@ -684,11 +668,9 @@ impl IREbnfParserMatcher {
         let mut count = 0;
 
         while i < s.len() {
-            let c = iter.next();
-            if c.is_none() {
+            let Some(c) = iter.next() else {
                 break;
-            }
-            let c = c.unwrap();
+            };
 
             count += 1;
 

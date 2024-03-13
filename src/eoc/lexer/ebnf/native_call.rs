@@ -62,12 +62,9 @@ impl NativeCallKind {
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
-        let c = ByteToCharIter::new(s).next();
-        if c.is_none() {
+        let Some(c) = ByteToCharIter::new(s).next() else {
             return None;
-        }
-
-        let c = c.unwrap();
+        };
 
         match self {
             Self::StartIdentifier => {
@@ -182,12 +179,9 @@ impl NativeCallKind {
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
-        let c = ByteToCharIter::new(s).next();
-        if c.is_none() {
+        let Some(c) = ByteToCharIter::new(s).next() else {
             return None;
-        }
-
-        let c = c.unwrap();
+        };
 
         match self {
             Self::StartIdentifier => {

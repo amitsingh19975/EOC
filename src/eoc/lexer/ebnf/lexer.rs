@@ -146,11 +146,9 @@ impl<'a> EbnfLexer<'a> {
                 break;
             }
 
-            let c = self.peek_char();
-            if c.is_none() {
+            let Some(c) = self.peek_char() else {
                 break;
-            }
-            let c = c.unwrap();
+            };
 
             if let Some(_) = self.skip_whitespace() {
                 continue;

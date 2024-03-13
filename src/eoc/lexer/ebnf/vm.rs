@@ -116,13 +116,10 @@ impl VmNode {
             }
             VmNode::TerminalHash(v, h) => {
                 let slice = s[state.cursor..].as_ref();
-                let ch = ByteToCharIter::new(slice).next();
-                if ch.is_none() {
+                let Some(ch) = ByteToCharIter::new(slice).next() else {
                     state.push_bool(false);
                     return 1;
-                }
-
-                let ch = ch.unwrap();
+                };
 
                 if h.contains(&TerminalValue::Char(ch)) {
                     state.cursor += ch.len_utf8();
@@ -151,14 +148,11 @@ impl VmNode {
                 let r = *b;
 
                 let slice = s[state.cursor..].as_ref();
-                let ch = ByteToCharIter::new(slice).next();
-
-                if ch.is_none() {
+                let Some(ch) = ByteToCharIter::new(slice).next() else {
                     state.push_bool(false);
                     return 1;
-                }
+                };
 
-                let ch = ch.unwrap();
                 if *inclusive {
                     if (l..=r).contains(&ch) {
                         state.cursor += ch.len_utf8();
@@ -177,13 +171,11 @@ impl VmNode {
             }
             VmNode::AnyChar => {
                 let slice = s[state.cursor..].as_ref();
-                let ch = ByteToCharIter::new(slice).next();
-                if ch.is_none() {
+                let Some(ch) = ByteToCharIter::new(slice).next() else {
                     state.push_bool(false);
                     return 1;
-                }
-
-                let ch = ch.unwrap();
+                };
+                
                 state.cursor += ch.len_utf8();
                 state.push_bool(true);
             }
