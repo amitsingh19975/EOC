@@ -398,18 +398,6 @@ impl Vm {
         }
     }
 
-    pub(super) fn init<'b>(
-        &mut self,
-        expr: EbnfExpr,
-        _source_manager: RelativeSourceManager<'b>,
-        diagnostic: &Diagnostic,
-    ) {
-        let mut builder = VmBuilder::new();
-        builder.from(expr, diagnostic);
-        let vm = builder.build();
-        self.merge(vm);
-    }
-
     pub fn run<'b>(
         &self,
         id: usize,
@@ -646,6 +634,22 @@ impl Vm {
 }
 
 impl EbnfMatcher for Vm {
+    fn init<'b>(
+        &mut self,
+        expr: Option<EbnfExpr>,
+        _source_manager: RelativeSourceManager<'b>,
+        diagnostic: &Diagnostic,
+    ) {
+        let Some(expr) = expr else {
+            return;
+        };
+
+        let mut builder = VmBuilder::new();
+        builder.from(expr, diagnostic);
+        let vm = builder.build();
+        self.merge(vm);
+    }
+
     fn contains_def(&self, name: &str) -> bool {
         self.identifiers.get(name).map(|(_, is_def)| *is_def).unwrap_or(false)
     }

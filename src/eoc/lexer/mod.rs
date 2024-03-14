@@ -4,7 +4,9 @@ use crate::eoc::lexer::ebnf::ast::EbnfParser;
 
 use self::{
     ebnf::{
-        ast::RelativeSourceManager, lexer::EbnfLexer, matcher::{EbnfParserMatcher, IREbnfParserMatcher}
+        ast::RelativeSourceManager,
+        lexer::EbnfLexer,
+        matcher::{EbnfMatcher, EbnfParserMatcher, IREbnfParserMatcher},
     },
     token::{Token, TokenKind},
     utils::{
@@ -16,29 +18,31 @@ use self::{
 use super::{
     ast::identifier::Identifier,
     utils::{
-        diagnostic::{Diagnostic, DiagnosticLevel}, source_manager::SourceManager, span::Span, string::UniqueString, trie::Trie
+        diagnostic::{Diagnostic, DiagnosticLevel},
+        source_manager::SourceManager,
+        span::Span,
+        string::UniqueString,
+        trie::Trie,
     },
 };
-use std::{
-    collections::HashMap, path::Path, vec
-};
+use std::{collections::HashMap, path::Path, vec};
 pub(crate) mod ebnf;
+pub(crate) mod number;
 pub(crate) mod str_utils;
 pub(crate) mod token;
 pub(crate) mod utils;
-pub(crate) mod number;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LexerMode {
     Normal,
-    IR
+    IR,
 }
 
 impl LexerMode {
     pub(crate) fn is_ir(&self) -> bool {
         matches!(self, LexerMode::IR)
     }
-    
+
     pub(crate) fn is_normal(&self) -> bool {
         matches!(self, LexerMode::Normal)
     }
@@ -55,7 +59,7 @@ pub(crate) struct Lexer {
     custom_keywords_trie: Trie<u8, usize>,
     rewind_stack: Vec<usize>,
     block_lexer_matcher: HashMap<UniqueString, EbnfParserMatcher>,
-    mode: LexerMode
+    mode: LexerMode,
 }
 
 impl Lexer {
@@ -71,7 +75,7 @@ impl Lexer {
             custom_operators_trie: Trie::new(),
             custom_keywords_trie: Trie::new(),
             block_lexer_matcher: HashMap::new(),
-            mode: LexerMode::Normal
+            mode: LexerMode::Normal,
         }
     }
 
@@ -134,7 +138,7 @@ impl Lexer {
 
     fn skip_whitespace(&mut self) -> Option<Token> {
         let Some(ch) = self.peek_char() else {
-            return None
+            return None;
         };
 
         let temp = match ch {
@@ -231,7 +235,12 @@ impl Lexer {
         false
     }
 
-    fn lex_identifier(&mut self, matcher: &EbnfParserMatcher, tokens: &mut Vec<Token>, should_parse_nested_operator: bool) {
+    fn lex_identifier<T: EbnfMatcher>(
+        &mut self,
+        matcher: &T,
+        tokens: &mut Vec<Token>,
+        should_parse_nested_operator: bool,
+    ) {
         if let Some(slice) = matcher.match_identifier(
             &self.source_manager.get_source()[self.cursor..],
             RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
@@ -262,7 +271,7 @@ impl Lexer {
         }
     }
 
-    fn lex_operator(&mut self, matcher: &EbnfParserMatcher, tokens: &mut Vec<Token>) {
+    fn lex_operator<T: EbnfMatcher>(&mut self, matcher: &T, tokens: &mut Vec<Token>) {
         if let Some(slice) = matcher.match_operator(
             &self.source_manager.get_source()[self.cursor..],
             RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
@@ -284,7 +293,7 @@ impl Lexer {
     ///   floating_literal ::= [0-9][0-9_]*[eE][+-]?[0-9][0-9_]*
     ///   floating_literal ::= 0x[0-9A-Fa-f][0-9A-Fa-f_]*
     ///                          (\.[0-9A-Fa-f][0-9A-Fa-f_]*)?[pP][+-]?[0-9][0-9_]*
-    fn lex_number(&mut self, matcher: &EbnfParserMatcher, tokens: &mut Vec<Token>) -> bool {
+    fn lex_number<T: EbnfMatcher>(&mut self, matcher: &T, tokens: &mut Vec<Token>) -> bool {
         let temp = matcher.match_native(
             ebnf::native_call::NativeCallKind::Integer,
             &self.source_manager.get_source()[self.cursor..],
@@ -317,11 +326,15 @@ impl Lexer {
         false
     }
 
-    fn lex_formatting_string(&mut self, matcher: &mut EbnfParserMatcher) -> Vec<Token> {
+    fn lex_formatting_string<T: EbnfMatcher>(&mut self, matcher: &mut T) -> Vec<Token> {
         self.lex_helper(matcher, vec!['}'], false, false)
     }
 
-    fn lex_double_quoted_string(&mut self, matcher: &mut EbnfParserMatcher, tokens: &mut Vec<Token>) {
+    fn lex_double_quoted_string<T: EbnfMatcher>(
+        &mut self,
+        matcher: &mut T,
+        tokens: &mut Vec<Token>,
+    ) {
         if self.peek_char() != Some('"') {
             return;
         }
@@ -705,7 +718,12 @@ impl Lexer {
         next == '/' || next == '*'
     }
 
-    fn parse_ebnf_lexer_block(&mut self, matcher: &mut EbnfParserMatcher, name_token: Option<Token>, span: Span) {
+    fn parse_ebnf_lexer_block<T: EbnfMatcher>(
+        &mut self,
+        matcher: &mut T,
+        name_token: Option<Token>,
+        span: Span,
+    ) {
         let mut enbf_lexer = EbnfLexer::new(
             &self.source_manager,
             &mut self.diagnostics,
@@ -717,7 +735,11 @@ impl Lexer {
         if let Some(name_token) = name_token {
             let name = std::str::from_utf8(&self.source_manager[name_token.span]).unwrap();
             let mut matcher = EbnfParserMatcher::new();
-            matcher.init(Some(program), RelativeSourceManager::new(&self.source_manager, self.cursor as u32), &mut self.diagnostics);
+            matcher.init(
+                Some(program),
+                RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+                &mut self.diagnostics,
+            );
             let name = UniqueString::new(name);
             if self.block_lexer_matcher.contains_key(&name) {
                 self.diagnostics
@@ -736,7 +758,11 @@ impl Lexer {
             }
             self.block_lexer_matcher.insert(name, matcher);
         } else {
-            matcher.init(Some(program), RelativeSourceManager::new(&self.source_manager, self.cursor as u32), &mut self.diagnostics);
+            matcher.init(
+                Some(program),
+                RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+                &mut self.diagnostics,
+            );
         }
     }
 
@@ -749,7 +775,7 @@ impl Lexer {
 
         self.save_cursor();
         let mut temp_name = None;
-        
+
         let code_start = self.cursor - 3;
         let mut code_end = self.cursor;
         for (name, _) in self.block_lexer_matcher.iter() {
@@ -757,7 +783,7 @@ impl Lexer {
             if !source.starts_with(name.as_str().as_bytes()) {
                 continue;
             }
-            
+
             temp_name = Some(name.clone());
             code_end += name.as_str().as_bytes().len();
             self.cursor = code_end;
@@ -779,16 +805,12 @@ impl Lexer {
                     .report(
                         DiagnosticLevel::Error,
                         "Unterminated lexer block",
-                        self.source_manager
-                            .get_source_info(code_span),
+                        self.source_manager.get_source_info(code_span),
                         None,
                     )
                     .add_error(
                         "Try add '```' to close the code block",
-                        Some(
-                            self.source_manager
-                                .fix_span(code_span),
-                        ),
+                        Some(self.source_manager.fix_span(code_span)),
                     )
                     .commit();
             } else {
@@ -798,14 +820,16 @@ impl Lexer {
             }
             tokens.push(Token::new(TokenKind::CustomCodeBlockStart(name), code_span));
             tokens.extend(temp_tokens);
-            tokens.push(Token::new(TokenKind::CustomCodeBlockEnd(name), code_end_span));
+            tokens.push(Token::new(
+                TokenKind::CustomCodeBlockEnd(name),
+                code_end_span,
+            ));
             self.block_lexer_matcher.insert(name, matcher);
             true
         } else {
             self.rewind_cursor();
             false
         }
-
     }
 
     fn skip_while_code_block_end(&mut self, start: usize) -> Span {
@@ -841,7 +865,7 @@ impl Lexer {
             {
                 let span = Span::from_usize(start, self.cursor);
                 self.cursor += 3;
-                return span
+                return span;
             }
 
             self.next_char();
@@ -849,12 +873,19 @@ impl Lexer {
         Span::from_usize(start, self.cursor)
     }
 
-    fn lex_back_tick(&mut self, matcher: &mut EbnfParserMatcher, tokens: &mut Vec<Token>, is_code_block: bool) -> bool {
-        if is_code_block && ParenMatching::is_triple_back_tick_block(
-            &self.source_manager.get_source(),
-            self.cursor,
-            b"```",
-        ) {
+    fn lex_back_tick<T: EbnfMatcher>(
+        &mut self,
+        matcher: &mut T,
+        tokens: &mut Vec<Token>,
+        is_code_block: bool,
+    ) -> bool {
+        if is_code_block
+            && ParenMatching::is_triple_back_tick_block(
+                &self.source_manager.get_source(),
+                self.cursor,
+                b"```",
+            )
+        {
             return false;
         }
         let lexer_block_bytes = b"```lexer";
@@ -924,16 +955,15 @@ impl Lexer {
             self.cursor,
             b"```",
         ) {
-            
             let dummy = (TokenKind::Unknown, Span::from_usize(0, 0));
             let last = self.paren_balance.last().unwrap_or(&dummy).clone();
             let span = Span::from_usize(self.cursor, self.cursor + 3);
             self.cursor += 3;
-            
+
             if self.try_lex_using_custom_matcher(tokens) {
                 return true;
             }
-            
+
             tokens.push(Token::new(TokenKind::TripleBackTick, span));
 
             let (token, _) = last;
@@ -1045,7 +1075,7 @@ impl Lexer {
         }
     }
 
-    fn is_start_of_identifier(&mut self, matcher: &EbnfParserMatcher) -> bool {
+    fn is_start_of_identifier<T: EbnfMatcher>(&mut self, matcher: &T) -> bool {
         // println!("str: {:?}", std::str::from_utf8(&self.source_manager.get_source()[self.cursor..]);
         matcher
             .match_native(
@@ -1057,7 +1087,7 @@ impl Lexer {
             .is_some()
     }
 
-    fn is_valid_digit(&mut self, matcher: &EbnfParserMatcher) -> bool {
+    fn is_valid_digit<T: EbnfMatcher>(&mut self, matcher: &T) -> bool {
         matcher
             .match_native(
                 ebnf::native_call::NativeCallKind::Digit,
@@ -1068,7 +1098,7 @@ impl Lexer {
             .is_some()
     }
 
-    fn is_valid_operator_start(&mut self, matcher: &EbnfParserMatcher) -> bool {
+    fn is_valid_operator_start<T: EbnfMatcher>(&mut self, matcher: &T) -> bool {
         matcher
             .match_native(
                 ebnf::native_call::NativeCallKind::StartOperator,
@@ -1079,7 +1109,13 @@ impl Lexer {
             .is_some()
     }
 
-    fn lex_helper(&mut self, matcher: &mut EbnfParserMatcher, until: Vec<char>, should_check_paren: bool, is_code_block: bool) -> Vec<Token> {
+    fn lex_helper<T: EbnfMatcher>(
+        &mut self,
+        matcher: &mut T,
+        until: Vec<char>,
+        should_check_paren: bool,
+        is_code_block: bool,
+    ) -> Vec<Token> {
         let mut tokens = Vec::new();
         let mut loop_iterations = 0usize;
         let mut last_cursor: Option<usize> = None;
@@ -1115,7 +1151,7 @@ impl Lexer {
                     loop_iterations = 0;
                 }
             }
-            
+
             if self.mode.is_ir() {
                 let temp_tokens = self.lex_ir_mode(false);
                 tokens.extend(temp_tokens);
@@ -1134,7 +1170,10 @@ impl Lexer {
             }
 
             if is_code_block {
-                if self.source_manager.get_source()[self.cursor..].as_ref().starts_with(b"```") {
+                if self.source_manager.get_source()[self.cursor..]
+                    .as_ref()
+                    .starts_with(b"```")
+                {
                     break;
                 }
             }
@@ -1145,7 +1184,7 @@ impl Lexer {
             if let Some((matched, kind)) = matcher.try_match_expr(
                 &self.source_manager.get_source()[self.cursor..],
                 RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
-                &mut self.diagnostics
+                &mut self.diagnostics,
             ) {
                 let end = self.cursor + matched.len();
                 let span = Span::from_usize(self.cursor, end);
@@ -1200,10 +1239,10 @@ impl Lexer {
                     self.lex_comment(&mut tokens);
                 }
                 _ if self.is_valid_digit(matcher) || !should_run_custom_match => {
-                    self.lex_number(&matcher, &mut tokens);
+                    self.lex_number(matcher, &mut tokens);
                 }
                 _ if self.is_start_of_identifier(matcher) => {
-                    self.lex_identifier(&matcher, &mut tokens, true);
+                    self.lex_identifier(matcher, &mut tokens, true);
                 }
                 '$' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
@@ -1285,8 +1324,8 @@ impl Lexer {
                     tokens.push(Token::new(TokenKind::Colon, span));
                     self.next_char();
                 }
-                _ if self.is_valid_operator_start(&matcher) => {
-                    self.lex_operator(&matcher, &mut tokens);
+                _ if self.is_valid_operator_start(matcher) => {
+                    self.lex_operator(matcher, &mut tokens);
                 }
                 '"' => {
                     self.lex_double_quoted_string(matcher, &mut tokens);
@@ -1337,12 +1376,15 @@ impl Lexer {
 
     fn lex_ir_mode(&mut self, is_file: bool) -> Vec<Token> {
         let mut tokens = Vec::new();
-        let matcher = IREbnfParserMatcher::new();
+        let mut matcher = IREbnfParserMatcher::new();
         let old_parens = self.paren_balance.clone();
         self.paren_balance.clear();
 
         if !is_file {
-            tokens.push(Token::new(TokenKind::IrStart, Span::from_usize(self.cursor, self.cursor)));
+            tokens.push(Token::new(
+                TokenKind::IrStart,
+                Span::from_usize(self.cursor, self.cursor),
+            ));
         }
 
         loop {
@@ -1355,55 +1397,62 @@ impl Lexer {
                 continue;
             }
 
-            let relative_manager = RelativeSourceManager::new(&self.source_manager, self.cursor as u32);
+            let relative_manager =
+                RelativeSourceManager::new(&self.source_manager, self.cursor as u32);
             let source = &self.source_manager.get_source()[self.cursor..];
 
             match ch {
                 _ if IREbnfParserMatcher::is_valid_number_start_code_point(ch) => {
                     let start = self.cursor;
-                    if let Some((s, t)) = matcher.match_number(source, relative_manager, &mut self.diagnostics) {
+                    if let Some((s, t)) =
+                        matcher.match_number(source, relative_manager, &mut self.diagnostics)
+                    {
                         let end = start + s.len();
                         let span = Span::from_usize(start, end);
                         tokens.push(Token::new(t, span));
                         self.cursor = end;
                     } else {
-                        let info = self.source_manager.get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
+                        let info = self
+                            .source_manager
+                            .get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
                         self.diagnostics
                             .builder()
-                            .report(
-                                DiagnosticLevel::Error,
-                                "Invalid number",
-                                info,
-                                None,
-                            )
+                            .report(DiagnosticLevel::Error, "Invalid number", info, None)
                             .add_error(
                                 "Invalid number",
-                                Some(self.source_manager.fix_span(Span::from_usize(self.cursor, self.cursor + 1))),
+                                Some(
+                                    self.source_manager
+                                        .fix_span(Span::from_usize(self.cursor, self.cursor + 1)),
+                                ),
                             )
                             .commit();
                         self.next_char();
                     }
                 }
                 _ if IREbnfParserMatcher::is_valid_identifier_start_code_point(ch) => {
-                    let id = matcher.match_identifier(source);
+                    let id = matcher.match_identifier(
+                        source,
+                        RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+                        &self.diagnostics,
+                    );
                     if let Some(id) = id {
                         let end = self.cursor + id.len();
                         let span = Span::from_usize(self.cursor, end);
                         tokens.push(Token::new(TokenKind::Identifier, span));
                         self.cursor = end;
                     } else {
-                        let info = self.source_manager.get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
+                        let info = self
+                            .source_manager
+                            .get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
                         self.diagnostics
                             .builder()
-                            .report(
-                                DiagnosticLevel::Error,
-                                "Invalid identifier",
-                                info,
-                                None,
-                            )
+                            .report(DiagnosticLevel::Error, "Invalid identifier", info, None)
                             .add_error(
                                 "Invalid identifier",
-                                Some(self.source_manager.fix_span(Span::from_usize(self.cursor, self.cursor + 1))),
+                                Some(
+                                    self.source_manager
+                                        .fix_span(Span::from_usize(self.cursor, self.cursor + 1)),
+                                ),
                             )
                             .commit();
                         self.next_char();
@@ -1482,7 +1531,7 @@ impl Lexer {
                         self.next_char();
                         span.end = self.cursor as u32;
                     }
-                    
+
                     if level == 0 {
                         span.end -= 1;
                     }
@@ -1533,12 +1582,16 @@ impl Lexer {
                             .report(
                                 DiagnosticLevel::Error,
                                 "Invalid token",
-                                self.source_manager.get_source_info(Span::from_usize(start, start + 1)),
+                                self.source_manager
+                                    .get_source_info(Span::from_usize(start, start + 1)),
                                 None,
                             )
                             .add_error(
                                 "Invalid token",
-                                Some(self.source_manager.fix_span(Span::from_usize(start, start + 1))),
+                                Some(
+                                    self.source_manager
+                                        .fix_span(Span::from_usize(start, start + 1)),
+                                ),
                             )
                             .commit();
                     }
@@ -1556,12 +1609,16 @@ impl Lexer {
                             .report(
                                 DiagnosticLevel::Error,
                                 "Invalid token",
-                                self.source_manager.get_source_info(Span::from_usize(start, start + 1)),
+                                self.source_manager
+                                    .get_source_info(Span::from_usize(start, start + 1)),
                                 None,
                             )
                             .add_error(
                                 "Invalid token",
-                                Some(self.source_manager.fix_span(Span::from_usize(start, start + 1))),
+                                Some(
+                                    self.source_manager
+                                        .fix_span(Span::from_usize(start, start + 1)),
+                                ),
                             )
                             .commit();
                     }
@@ -1572,24 +1629,28 @@ impl Lexer {
                     self.next_char();
                 }
                 '"' => {
-                    if let Some(s) = matcher.match_string_literal(source, relative_manager, &mut self.diagnostics) {
+                    if let Some(s) = matcher.match_string_literal(
+                        source,
+                        relative_manager,
+                        &mut self.diagnostics,
+                    ) {
                         let end = self.cursor + s.len();
                         let span = Span::from_usize(self.cursor, end);
                         tokens.push(Token::new(TokenKind::String, span));
                         self.cursor = end + 1;
                     } else {
-                        let info = self.source_manager.get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
+                        let info = self
+                            .source_manager
+                            .get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
                         self.diagnostics
                             .builder()
-                            .report(
-                                DiagnosticLevel::Error,
-                                "Invalid string literal",
-                                info,
-                                None,
-                            )
+                            .report(DiagnosticLevel::Error, "Invalid string literal", info, None)
                             .add_error(
                                 "Invalid string literal",
-                                Some(self.source_manager.fix_span(Span::from_usize(self.cursor, self.cursor + 1))),
+                                Some(
+                                    self.source_manager
+                                        .fix_span(Span::from_usize(self.cursor, self.cursor + 1)),
+                                ),
                             )
                             .commit();
                         self.next_char();
@@ -1608,13 +1669,19 @@ impl Lexer {
                     self.next_char();
                 }
                 '\'' => {
-                    if let Some(s) = matcher.match_character_literal(source, relative_manager, &mut self.diagnostics) {
+                    if let Some(s) = matcher.match_character_literal(
+                        source,
+                        relative_manager,
+                        &mut self.diagnostics,
+                    ) {
                         let end = self.cursor + s.len();
                         let span = Span::from_usize(self.cursor, end);
                         tokens.push(Token::new(TokenKind::Char, span));
                         self.cursor = end + 1;
                     } else {
-                        let info = self.source_manager.get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
+                        let info = self
+                            .source_manager
+                            .get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
                         self.diagnostics
                             .builder()
                             .report(
@@ -1625,7 +1692,10 @@ impl Lexer {
                             )
                             .add_error(
                                 "Invalid character literal",
-                                Some(self.source_manager.fix_span(Span::from_usize(self.cursor, self.cursor + 1))),
+                                Some(
+                                    self.source_manager
+                                        .fix_span(Span::from_usize(self.cursor, self.cursor + 1)),
+                                ),
                             )
                             .commit();
                         self.next_char();
@@ -1640,6 +1710,11 @@ impl Lexer {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
                     tokens.push(Token::new(TokenKind::Dot, span));
                     self.next_char();
+                }
+                '`' => {
+                    if !self.lex_back_tick(&mut matcher, &mut tokens, false) {
+                        break;
+                    }
                 }
                 _ => {
                     self.check_balanced_paren(&[]);
@@ -1656,7 +1731,10 @@ impl Lexer {
         }
 
         if !is_file {
-            tokens.push(Token::new(TokenKind::IrEnd, Span::from_usize(self.cursor, self.cursor)));
+            tokens.push(Token::new(
+                TokenKind::IrEnd,
+                Span::from_usize(self.cursor, self.cursor),
+            ));
         }
         self.check_balanced_paren(&[]);
         self.paren_balance = old_parens;

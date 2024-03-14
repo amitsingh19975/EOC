@@ -55,9 +55,9 @@ impl NativeCallKind {
         }
     }
 
-    pub(super) fn call<'b>(
+    pub(super) fn call<'b, T: EbnfMatcher>(
         &self,
-        matcher: &DefaultEbnfParserMatcher,
+        matcher: &T,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &Diagnostic,
@@ -351,6 +351,8 @@ pub(crate) struct NativeCallKindId {
     pub(crate) operator_sym: UniqueString,
     pub(crate) integer_sym: UniqueString,
     pub(crate) fp_sym: UniqueString,
+    pub(crate) string_sym: UniqueString,
+    pub(crate) char_sym: UniqueString,
 }
 
 impl NativeCallKindId {
@@ -364,6 +366,8 @@ impl NativeCallKindId {
             operator_sym: UniqueString::new("operator"),
             integer_sym: UniqueString::new("integer"),
             fp_sym: UniqueString::new("floating_point"),
+            string_sym: UniqueString::new("string_literal"),
+            char_sym: UniqueString::new("char_literal"),
         }
     }
 }
