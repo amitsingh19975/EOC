@@ -349,8 +349,16 @@ impl<'a> DiagnosticBuilder<'a> {
     }
 
     pub(crate) fn commit(&mut self) {
-        let inner = self.inner.take().expect("DiagnosticBuilder::finish called without a message!");
+        let inner = self.inner.take().expect("DiagnosticBuilder::commit called without a message!");
         self.base.add_message(inner);
+    }
+}
+
+impl Drop for DiagnosticBuilder<'_> {
+    fn drop(&mut self) {
+        if self.inner.is_some() {
+            self.commit();
+        }
     }
 }
 
