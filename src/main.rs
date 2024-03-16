@@ -15,7 +15,7 @@ fn main() -> Result<()> {
     tokens.iter().for_each(|token| println!("{}", token.to_string(&lexer.get_source_manager())));
     println!("{}", lexer.get_diagnostics());
     println!("Operators: {:#?}", lexer.get_custom_operators().iter().map(|op| op.to_debug_string(&lexer.get_source_manager())).collect::<Vec<_>>());
-    println!("Keywords: {:#?}", lexer.get_custom_keywords());
+    println!("Keywords: {:#?}", lexer.get_custom_keywords().iter().map(|op| op.to_debug_string(&lexer.get_source_manager())).collect::<Vec<_>>());
     // let mut diagnostics = eoc::utils::diagnostic::DiagnosticBag::new(filepath);
     // diagnostics.builder()
     //     .add_warning("This is an error".to_string(), None)

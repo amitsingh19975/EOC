@@ -88,4 +88,8 @@ impl Identifier {
         let slice = &source_manager[self.span];
         std::str::from_utf8(slice).expect("Invalid UTF-8")
     }
+
+    pub(crate) fn to_debug_string<'a>(&self, source_manager: &'a SourceManager) -> String {
+        format!("{}", self.to_str(source_manager))
+    }
 }
