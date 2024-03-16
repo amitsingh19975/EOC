@@ -2085,6 +2085,8 @@ impl Lexer {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
                     self.expect_block_or_paren(TokenKind::CloseParen);
                     tokens.push(Token::new(TokenKind::CloseParen, span));
+                    self.next_char();
+                    break;
                 }
                 _ => {
                     break;
