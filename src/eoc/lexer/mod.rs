@@ -766,70 +766,63 @@ impl Lexer {
         }
     }
 
-    fn try_lex_using_custom_matcher(&mut self, tokens: &mut Vec<Token>) -> bool {
-        if let Some(ch) = self.peek_char() {
-            if ch.is_whitespace() {
-                return false;
-            }
+    fn try_lex_using_custom_matcher(&mut self, tokens: &mut Vec<Token>, name: UniqueString, name_span: Span) -> bool {
+        if !self.block_lexer_matcher.contains_key(&name) {
+            self.cursor += self.skip_while_code_block_end(self.cursor).len();
+            let info = self.source_manager.get_source_info(name_span);
+            self.diagnostics
+                .builder()
+                .report(
+                    DiagnosticLevel::Error,
+                    "Unknown lexer block name",
+                    info,
+                    None,
+                )
+                .add_error(
+                    "Try defining a code block with this name",
+                    Some(self.source_manager.fix_span(name_span)),
+                )
+                .commit();
+            return false;
         }
+        
+        let code_start = self.cursor;
 
-        self.save_cursor();
-        let mut temp_name = None;
-
-        let code_start = self.cursor - 3;
-        let mut code_end = self.cursor;
-        for (name, _) in self.block_lexer_matcher.iter() {
-            let source = &self.source_manager.get_source()[self.cursor..];
-            if !source.starts_with(name.as_str().as_bytes()) {
-                continue;
-            }
-
-            temp_name = Some(name.clone());
-            code_end += name.as_str().as_bytes().len();
-            self.cursor = code_end;
-            break;
-        }
-
-        if let Some(name) = temp_name {
-            let code_span = Span::from_usize(code_start, code_end);
-            let mut code_end_span = code_span;
-            let mut matcher = self.block_lexer_matcher.remove(&name).unwrap();
-            let temp_tokens = self.lex_helper(&mut matcher, vec![], true, true);
-            if !ParenMatching::is_triple_back_tick_block(
-                &self.source_manager.get_source(),
-                self.cursor,
-                b"```",
-            ) {
-                self.diagnostics
-                    .builder()
-                    .report(
-                        DiagnosticLevel::Error,
-                        "Unterminated lexer block",
-                        self.source_manager.get_source_info(code_span),
-                        None,
-                    )
-                    .add_error(
-                        "Try add '```' to close the code block",
-                        Some(self.source_manager.fix_span(code_span)),
-                    )
-                    .commit();
-            } else {
-                code_end_span.start = self.cursor as u32;
-                self.cursor += 3;
-                code_end_span.end = self.cursor as u32;
-            }
-            tokens.push(Token::new(TokenKind::CustomCodeBlockStart(name), code_span));
-            tokens.extend(temp_tokens);
-            tokens.push(Token::new(
-                TokenKind::CustomCodeBlockEnd(name),
-                code_end_span,
-            ));
-            self.block_lexer_matcher.insert(name, matcher);
-            true
+        let code_span = Span::from_usize(code_start, code_start);
+        let mut code_end_span = code_span;
+        let mut matcher = self.block_lexer_matcher.remove(&name).unwrap();
+        let temp_tokens = self.lex_helper(&mut matcher, vec![], true, true);
+        if !ParenMatching::is_triple_back_tick_block(
+            &self.source_manager.get_source(),
+            self.cursor,
+            b"```",
+        ) {
+            self.diagnostics
+                .builder()
+                .report(
+                    DiagnosticLevel::Error,
+                    "Unterminated lexer block",
+                    self.source_manager.get_source_info(code_span),
+                    None,
+                )
+                .add_error(
+                    "Try add '```' to close the code block",
+                    Some(self.source_manager.fix_span(code_span)),
+                )
+                .commit();
         } else {
-            self.rewind_cursor();
-            false
+            code_end_span.start = self.cursor as u32;
+            self.cursor += 3;
+            code_end_span.end = self.cursor as u32;
         }
+        tokens.push(Token::new(TokenKind::CustomCodeBlockStart(name), Span::from_usize(code_start - name.as_ref().as_bytes().len() - 3, code_start)));
+        tokens.extend(temp_tokens);
+        tokens.push(Token::new(
+            TokenKind::CustomCodeBlockEnd(name),
+            code_end_span,
+        ));
+        self.block_lexer_matcher.insert(name, matcher);
+        true
     }
 
     fn skip_while_code_block_end(&mut self, start: usize) -> Span {
@@ -873,39 +866,41 @@ impl Lexer {
         Span::from_usize(start, self.cursor)
     }
 
-    fn lex_back_tick<T: EbnfMatcher>(
+    fn lex_lexer_code_block<T: EbnfMatcher>(
         &mut self,
-        matcher: &mut T,
-        tokens: &mut Vec<Token>,
-        is_code_block: bool,
-    ) -> bool {
-        if is_code_block
-            && ParenMatching::is_triple_back_tick_block(
-                &self.source_manager.get_source(),
-                self.cursor,
-                b"```",
-            )
-        {
-            return false;
-        }
-        let lexer_block_bytes = b"```lexer";
-        if ParenMatching::is_triple_back_tick_block(
-            &self.source_manager.get_source(),
-            self.cursor,
-            lexer_block_bytes,
-        ) {
-            self.cursor += lexer_block_bytes.len();
-            let mut start = self.cursor;
-            let mut name_token = None;
-            if self.peek_char() == Some('(') {
-                let temp_start = self.cursor;
-                self.next_char();
-                let tokens = self.lex_helper(matcher, vec![')'], true, false);
-                self.next_char();
-                if tokens.len() != 1 {
-                    let info = self
-                        .source_manager
-                        .get_source_info(Span::from_usize(temp_start, self.cursor + 1));
+        matcher: &mut T
+    ) {
+        let mut start = self.cursor;
+        let mut name_token = None;
+        if self.peek_char() == Some('(') {
+            let temp_start = self.cursor;
+            self.next_char();
+            let tokens = self.lex_helper(matcher, vec![')'], true, false);
+            self.next_char();
+            if tokens.len() != 1 {
+                let info = self
+                    .source_manager
+                    .get_source_info(Span::from_usize(temp_start, self.cursor + 1));
+                self.diagnostics
+                    .builder()
+                    .report(
+                        DiagnosticLevel::Error,
+                        "Invalid lexer block name",
+                        info,
+                        None,
+                    )
+                    .add_error(
+                        "Add a name to the lexer block",
+                        Some(
+                            self.source_manager
+                                .fix_span(Span::from_usize(temp_start, self.cursor + 1)),
+                        ),
+                    )
+                    .commit();
+            } else {
+                let token = tokens.first().unwrap();
+                if !token.is_identifier() {
+                    let info = self.source_manager.get_source_info(token.span);
                     self.diagnostics
                         .builder()
                         .report(
@@ -915,54 +910,51 @@ impl Lexer {
                             None,
                         )
                         .add_error(
-                            "Add a name to the lexer block",
-                            Some(
-                                self.source_manager
-                                    .fix_span(Span::from_usize(temp_start, self.cursor + 1)),
-                            ),
+                            "Invalid lexer block name",
+                            Some(self.source_manager.fix_span(token.span)),
                         )
                         .commit();
                 } else {
-                    let token = tokens.first().unwrap();
-                    if !token.is_identifier() {
-                        let info = self.source_manager.get_source_info(token.span);
-                        self.diagnostics
-                            .builder()
-                            .report(
-                                DiagnosticLevel::Error,
-                                "Invalid lexer block name",
-                                info,
-                                None,
-                            )
-                            .add_error(
-                                "Invalid lexer block name",
-                                Some(self.source_manager.fix_span(token.span)),
-                            )
-                            .commit();
-                    } else {
-                        name_token = Some(token.clone());
-                    }
+                    name_token = Some(token.clone());
                 }
-                start = self.cursor;
             }
-            let span = self.skip_while_code_block_end(start);
-            self.parse_ebnf_lexer_block(matcher, name_token, span);
-            return true;
+            start = self.cursor;
         }
+        let span = self.skip_while_code_block_end(start);
+        self.parse_ebnf_lexer_block(matcher, name_token, span);
+    }
 
-        if ParenMatching::is_triple_back_tick_block(
+    fn lex_back_tick<T: EbnfMatcher>(
+        &mut self,
+        matcher: &mut T,
+        tokens: &mut Vec<Token>,
+        is_code_block: bool,
+    ) -> bool {
+
+        let is_start_code_block = ParenMatching::is_triple_back_tick_block(
             &self.source_manager.get_source(),
             self.cursor,
             b"```",
-        ) {
+        );
+
+        if is_code_block && is_start_code_block {
+            return false;
+        }
+
+        if !is_start_code_block {
+            let span = Span::from_usize(self.cursor, self.cursor + 1);
+            tokens.push(Token::new(TokenKind::Backtick, span));
+            self.next_char();
+            return true;
+        }
+
+        self.cursor += 3;
+
+        if !self.is_start_of_identifier(matcher) {
             let dummy = (TokenKind::Unknown, Span::from_usize(0, 0));
             let last = self.paren_balance.last().unwrap_or(&dummy).clone();
             let span = Span::from_usize(self.cursor, self.cursor + 3);
             self.cursor += 3;
-
-            if self.try_lex_using_custom_matcher(tokens) {
-                return true;
-            }
 
             tokens.push(Token::new(TokenKind::TripleBackTick, span));
 
@@ -988,11 +980,45 @@ impl Lexer {
                     self.paren_balance.push((TokenKind::TripleBackTick, span));
                 }
             }
-        } else {
-            let span = Span::from_usize(self.cursor, self.cursor + 1);
-            tokens.push(Token::new(TokenKind::Backtick, span));
-            self.next_char();
+
+            return true;
         }
+
+        self.lex_identifier(matcher, tokens, false);
+        let identifier = tokens.pop().unwrap();
+        let id_span = identifier.span.clone();
+        let name = unsafe {
+            std::str::from_utf8_unchecked(self.source_manager[id_span].as_ref())
+        };
+
+        if name == "lexer" {
+            self.skip_whitespace().map(|t| tokens.push(t));
+            self.lex_lexer_code_block(matcher);
+            return true;
+        }
+
+        let Some(u_name) = UniqueString::try_new(name) else {
+            let body_span = self.skip_while_code_block_end(self.cursor);
+            self.cursor += body_span.len();
+            let info = self.source_manager.get_source_info(id_span);
+            self.diagnostics
+                .builder()
+                .report(
+                    DiagnosticLevel::Error,
+                    "Unknown lexer block name",
+                    info,
+                    None,
+                )
+                .add_error(
+                    "Try defining a code block with this name",
+                    Some(self.source_manager.fix_span(id_span)),
+                )
+                .commit();
+            return true;
+        };
+        
+        self.try_lex_using_custom_matcher(tokens, u_name, id_span);
+
         true
     }
 
