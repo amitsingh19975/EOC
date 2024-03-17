@@ -122,9 +122,8 @@ impl<'a> EbnfParser<'a> {
                 }
             }
         }
-        let temp = EbnfExpr::Statements(statements, 1);
-        println!("{}", temp);
-        temp
+        
+        EbnfExpr::Statements(statements, 1)
     }
 
     fn get_string_from_token(&self, token: &Token) -> String {
