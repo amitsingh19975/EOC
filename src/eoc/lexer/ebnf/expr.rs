@@ -126,6 +126,11 @@ pub(crate) enum EbnfExpr {
     Repetition(Box<EbnfExpr>, EbnfExprMaxByteLen),
     Terminal(TerminalValue),
     Statements(Vec<EbnfExpr>, EbnfExprMaxByteLen),
+    UnboundedExpr(Box<EbnfExpr>),
+    LabelledExpr {
+        label: String,
+        expr: Box<EbnfExpr>,
+    },
     Variable {
         name: String,
         expr: Box<EbnfExpr>,
@@ -171,6 +176,20 @@ impl EbnfExpr {
     pub(super) fn is_char(&self) -> bool {
         match self {
             EbnfExpr::Terminal(t) => t.is_char(),
+            _ => false,
+        }
+    }
+
+    pub(super) fn is_unbounded(&self) -> bool {
+        match self {
+            EbnfExpr::UnboundedExpr(_) => true,
+            _ => false,
+        }
+    }
+
+    pub(super) fn is_identifier(&self) -> bool {
+        match self {
+            EbnfExpr::Identifier(_, _) => true,
             _ => false,
         }
     }
@@ -302,6 +321,7 @@ impl Display for EbnfExpr {
                 }
                 Ok(())
             }
+            EbnfExpr::UnboundedExpr(e) => write!(f, "{}", e),
             EbnfExpr::Identifier(name, ..) => write!(f, "{}", name),
             EbnfExpr::Variable { name, expr, is_def } => {
                 if *is_def {
@@ -384,6 +404,7 @@ impl Display for EbnfExpr {
                 write!(f, "{}", rhs)
             }
             EbnfExpr::AnyChar => write!(f, "."),
+            EbnfExpr::LabelledExpr { label, expr } => write!(f, "{}: {}", label, expr),
         }
     }
 }

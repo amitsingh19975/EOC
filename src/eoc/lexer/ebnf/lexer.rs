@@ -273,31 +273,19 @@ impl<'a> EbnfLexer<'a> {
                                 .commit();
                         }
                     } else {
-                        self.diagnostics
-                            .builder()
-                            .report(
-                                DiagnosticLevel::Error,
-                                "Unexpected character",
-                                self.source_manager.get_source_info(Span::from_usize(
-                                    self.cursor - 1,
-                                    self.cursor,
-                                )),
-                                None,
-                            )
-                            .add_error(
-                                "Expected '::'".to_string(),
-                                Some(self.source_manager.fix_span(Span::from_usize(
-                                    self.cursor - 1,
-                                    self.cursor,
-                                ))),
-                            )
-                            .commit();
+                        let span = Span::from_usize(self.cursor - 1, self.cursor);
+                        tokens.push(Token::new(TokenKind::Colon, span));
                     }
                     
                 }
                 '=' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
                     tokens.push(Token::new(TokenKind::Equal, span));
+                    self.next_char();
+                }
+                '$' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    tokens.push(Token::new(TokenKind::Dollar, span));
                     self.next_char();
                 }
                 _ => {

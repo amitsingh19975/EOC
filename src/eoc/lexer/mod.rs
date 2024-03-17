@@ -4,7 +4,7 @@ use crate::eoc::lexer::ebnf::ast::EbnfParser;
 
 use self::{
     ebnf::{
-        ast::RelativeSourceManager,
+        ast::{EbnfParserMode, RelativeSourceManager},
         lexer::EbnfLexer,
         matcher::{EbnfMatcher, EbnfParserMatcher, IREbnfParserMatcher},
     },
@@ -737,7 +737,7 @@ impl Lexer {
             span.end as usize,
         );
         let tokens = enbf_lexer.lex();
-        let program = EbnfParser::parse(tokens, &self.source_manager, &mut self.diagnostics);
+        let program = EbnfParser::parse(tokens, EbnfParserMode::Lexer, &self.source_manager, &mut self.diagnostics);
         if let Some(name_token) = name_token {
             let name = std::str::from_utf8(&self.source_manager[name_token.span]).unwrap();
             let mut matcher = EbnfParserMatcher::new();

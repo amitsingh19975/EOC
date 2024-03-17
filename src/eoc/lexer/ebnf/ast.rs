@@ -41,16 +41,24 @@ impl<'a> RelativeSourceManager<'a> {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EbnfParserMode {
+    Lexer,
+    Parser,
+}
+
 pub(crate) struct EbnfParser<'a> {
     source_manager: &'a SourceManager,
     diagnostic: &'a Diagnostic,
     tokens: Vec<Token>,
+    mode: EbnfParserMode,
     cursor: usize,
 }
 
 impl<'a> EbnfParser<'a> {
     pub(crate) fn parse(
         tokens: Vec<Token>,
+        mode: EbnfParserMode,
         source_manager: &SourceManager,
         diagnostic: &Diagnostic,
     ) -> EbnfExpr {
@@ -58,6 +66,7 @@ impl<'a> EbnfParser<'a> {
             source_manager,
             diagnostic,
             tokens,
+            mode,
             cursor: 0,
         };
 
@@ -90,12 +99,32 @@ impl<'a> EbnfParser<'a> {
         let mut statements = Vec::new();
 
         while !self.is_empty() {
+            let span = self.peek().unwrap().span;
             if let Some((expr, _)) = self.parse_statement() {
+                let current_span = self.peek().map(|t| Span::new(span.start, t.span.end)).unwrap_or(span);
+                let is_unbounded = expr.is_unbounded();
                 statements.push(expr);
+                if is_unbounded && !self.is_empty() {
+                    self.diagnostic
+                        .builder()
+                        .report(
+                            DiagnosticLevel::Error,
+                            "Unreachable statement",
+                            self.source_manager.get_source_info(current_span),
+                            None,
+                        )
+                        .add_info(
+                            "Remove this statement",
+                            Some(self.source_manager.fix_span(current_span)),
+                        )
+                        .commit();
+                    break;
+                }
             }
         }
-
-        EbnfExpr::Statements(statements, 1)
+        let temp = EbnfExpr::Statements(statements, 1);
+        println!("{}", temp);
+        temp
     }
 
     fn get_string_from_token(&self, token: &Token) -> String {
@@ -110,6 +139,7 @@ impl<'a> EbnfParser<'a> {
             TokenKind::Exception => (5, 6),
             TokenKind::Plus => (7, 8),
             TokenKind::Range | TokenKind::RangeEqual => (9, 10),
+            TokenKind::Colon => (12, 13),
             _ => (0, 0),
         }
     }
@@ -151,22 +181,7 @@ impl<'a> EbnfParser<'a> {
             TokenKind::Terminal => Some(self.get_terminal_from_token(&token)),
             TokenKind::Dot => Some((EbnfExpr::AnyChar, span)),
             TokenKind::Semicolon => None,
-            _ => {
-                self.diagnostic
-                    .builder()
-                    .report(
-                        DiagnosticLevel::Error,
-                        "Expected identifier or terminal",
-                        self.source_manager.get_source_info(token.span),
-                        None,
-                    )
-                    .add_error(
-                        "Unknown token",
-                        Some(self.source_manager.fix_span(token.span)),
-                    )
-                    .commit();
-                None
-            }
+            _ => None
         }
     }
 
@@ -220,6 +235,83 @@ impl<'a> EbnfParser<'a> {
                 self.next();
                 self.parse_paren_expr(TokenKind::OpenBrace, 0)
                     .map(|(expr, span)| (EbnfExpr::Repetition(Box::new(expr), 1), span))
+            }
+            TokenKind::Dollar => {
+                self.next();
+                if self.mode != EbnfParserMode::Parser {
+                    self.diagnostic
+                        .builder()
+                        .report(
+                            DiagnosticLevel::Error,
+                            "Unexpected '$'; labels are only allowed in parser mode",
+                            self.source_manager.get_source_info(token.span),
+                            None,
+                        )
+                        .add_info(
+                            "Remove this",
+                            Some(self.source_manager.fix_span(token.span)),
+                        )
+                        .commit();
+                    return None;
+                }
+
+                let Some((EbnfExpr::Identifier(id, _), span)) = self.parse_primary() else {
+                    self.diagnostic
+                        .builder()
+                        .report(
+                            DiagnosticLevel::Error,
+                            "Expected label after '$'",
+                            self.source_manager.get_source_info(token.span),
+                            None,
+                        )
+                        .add_info(
+                            "Try add label after this",
+                            Some(self.source_manager.fix_span(token.span)),
+                        )
+                        .commit();
+                    return None;
+                };
+
+                if self.peek_kind() != Some(TokenKind::Colon) {
+                    self.diagnostic
+                        .builder()
+                        .report(
+                            DiagnosticLevel::Error,
+                            "Expected ':' after label",
+                            self.source_manager.get_source_info(span),
+                            None,
+                        )
+                        .add_info(
+                            "Try add ':' after this",
+                            Some(self.source_manager.fix_span(span)),
+                        )
+                        .commit();
+                    return None;
+                }
+
+                self.next();
+
+                let Some((rhs, r_span)) = self.parse_expr(0) else  {
+                    self.diagnostic
+                        .builder()
+                        .report(
+                            DiagnosticLevel::Error,
+                            "Expected expression after label",
+                            self.source_manager.get_source_info(span),
+                            None,
+                        )
+                        .add_info(
+                            "Try add expression after this",
+                            Some(self.source_manager.fix_span(span)),
+                        )
+                        .commit();
+                    return None;
+                };
+
+                Some((
+                    EbnfExpr::LabelledExpr { label: id, expr: Box::new(rhs) },
+                    r_span,
+                ))
             }
             _ => self.parse_primary(),
         }
@@ -334,7 +426,7 @@ impl<'a> EbnfParser<'a> {
     }
 
     fn parse_statement(&mut self) -> Option<(EbnfExpr, Span)> {
-        let lhs_expr = self.parse_primary();
+        let lhs_expr = self.parse_expr(0);
         if lhs_expr.is_none() {
             return None;
         }
@@ -352,6 +444,9 @@ impl<'a> EbnfParser<'a> {
         let is_def = equal_token.kind == TokenKind::Definition;
 
         if !(is_equal || is_def) {
+            if self.mode == EbnfParserMode::Parser {
+                return Some((EbnfExpr::UnboundedExpr(Box::new(lhs_expr)), span));
+            }
             self.diagnostic
                 .builder()
                 .report(

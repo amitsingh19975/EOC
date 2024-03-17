@@ -1023,6 +1023,13 @@ impl VmBuilder {
             EbnfExpr::AnyChar => {
                 self.nodes.push(VmNode::AnyChar);
             }
+            EbnfExpr::UnboundedExpr(e) => {
+                panic!("Unbounded expression: {e}");
+            }
+            EbnfExpr::LabelledExpr { label, expr } => {
+                println!("Labelled: {label}");
+                self.from(*expr, diagnostic);
+            }
         }
     }
 }
