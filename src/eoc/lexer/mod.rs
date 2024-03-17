@@ -60,6 +60,7 @@ pub(crate) struct Lexer {
     rewind_stack: Vec<usize>,
     block_lexer_matcher: HashMap<UniqueString, EbnfParserMatcher>,
     mode: LexerMode,
+    shebang_span: Span,
 }
 
 impl Lexer {
@@ -76,6 +77,7 @@ impl Lexer {
             custom_keywords_trie: Trie::new(),
             block_lexer_matcher: HashMap::new(),
             mode: LexerMode::Normal,
+            shebang_span: Span::default(),
         }
     }
 
@@ -99,6 +101,10 @@ impl Lexer {
 
     pub(crate) fn get_diagnostics(&self) -> &Diagnostic {
         &self.diagnostics
+    }
+
+    pub(crate) fn get_shebang_span(&self) -> Span {
+        self.shebang_span
     }
 
     fn save_cursor(&mut self) {
@@ -1145,6 +1151,7 @@ impl Lexer {
         let mut tokens = Vec::new();
         let mut loop_iterations = 0usize;
         let mut last_cursor: Option<usize> = None;
+        let mut is_shebang_valid = true;
 
         loop {
             if let Some(last_cursor) = last_cursor {
@@ -1217,6 +1224,7 @@ impl Lexer {
                 tokens.push(Token::new(kind, span));
                 self.cursor = end;
                 last_cursor = Some(self.cursor);
+                is_shebang_valid = false;
                 continue;
             }
 
@@ -1246,6 +1254,7 @@ impl Lexer {
                 {
                     tokens.push(token);
                     self.cursor += len;
+                    is_shebang_valid = false;
                     continue;
                 }
 
@@ -1254,6 +1263,7 @@ impl Lexer {
                 {
                     tokens.push(token);
                     self.cursor += len;
+                    is_shebang_valid = false;
                     continue;
                 }
             }
@@ -1375,9 +1385,41 @@ impl Lexer {
                     }
                 }
                 '#' => {
-                    let span = Span::from_usize(self.cursor, self.cursor + 1);
-                    tokens.push(Token::new(TokenKind::Hash, span));
+                    let mut span = Span::from_usize(self.cursor, self.cursor + 1);
                     self.next_char();
+
+                    if self.peek_char() == Some('!') {
+                        self.skip_while(|c| c != '\n');
+                        span.end = self.cursor as u32;
+
+                        if !is_shebang_valid {
+                            let info = self
+                                .source_manager
+                                .get_source_info(span);
+                            self.diagnostics
+                                .builder()
+                                .report(
+                                    DiagnosticLevel::Error,
+                                    "Invalid shebang",
+                                    info,
+                                    None,
+                                )
+                                .add_error(
+                                    "Shebang must be at the start of the file",
+                                    Some(
+                                        self.source_manager
+                                            .fix_span(span),
+                                    ),
+                                )
+                                .commit();
+                            continue;
+                        }
+
+                        self.shebang_span = span;
+                    } else {
+                        tokens.push(Token::new(TokenKind::Hash, span));
+                    }
+
                 }
                 _ => {
                     self.check_balanced_paren(&until);
@@ -1391,6 +1433,7 @@ impl Lexer {
                     )
                 }
             }
+            is_shebang_valid = false;
         }
 
         if should_check_paren {

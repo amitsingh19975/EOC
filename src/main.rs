@@ -12,8 +12,12 @@ fn main() -> Result<()> {
     let diagnostic = StreamingDiagnosticBag::new(Box::new(std::io::stderr()), filepath);
     let mut lexer = eoc::lexer::Lexer::new_from_filepath(filepath, diagnostic)?;
     let tokens = lexer.lex();
+    let shebang_span = lexer.get_shebang_span();
     tokens.iter().for_each(|token| println!("{}", token.to_string(&lexer.get_source_manager())));
     println!("{}", lexer.get_diagnostics());
+    if !shebang_span.is_empty() {
+        println!("Shebang: {}", lexer.get_source_manager().str_from_span(shebang_span).to_owned());
+    }
     println!("Operators: {:#?}", lexer.get_custom_operators().iter().map(|op| op.to_debug_string(&lexer.get_source_manager())).collect::<Vec<_>>());
     println!("Keywords: {:#?}", lexer.get_custom_keywords().iter().map(|op| op.to_debug_string(&lexer.get_source_manager())).collect::<Vec<_>>());
     // let mut diagnostics = eoc::utils::diagnostic::DiagnosticBag::new(filepath);

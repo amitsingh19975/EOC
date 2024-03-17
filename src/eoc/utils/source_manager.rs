@@ -115,6 +115,10 @@ impl SourceManager {
         byte_to_char(&source[index..])
     }
 
+    pub(crate) fn str_from_span(&self, span: Span) -> &str {
+        std::str::from_utf8(self[span].as_ref()).expect("invalid utf-8 string slice")
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.source.len()
     }
