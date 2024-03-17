@@ -1030,7 +1030,7 @@ impl VmBuilder {
                 self.nodes.push(VmNode::AnyChar);
             }
             EbnfExpr::UnboundedExpr(e) => {
-                panic!("Unbounded expression: {e}");
+                self.from(*e, diagnostic);
             }
             EbnfExpr::LabelledExpr { label, expr } => {
                 let current_len = self.len();
