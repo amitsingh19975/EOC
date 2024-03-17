@@ -52,6 +52,7 @@ pub(super) enum VmNode {
     Optional(u16), // Optional a
     // ===========================
     Repetition(u16), // Repeat if [stack-value]
+    Label(String, u16), // Label a
 }
 
 impl VmNode {
@@ -99,6 +100,11 @@ impl VmNode {
                 } else {
                     state.push_bool(false);
                 }
+            }
+            VmNode::Label(_, off) => {
+                let off = *off as usize;
+                Self::exec(vm, state, s, source_manager, diagnostic);
+                return off;
             }
             VmNode::Call(addr, ..) => {
                 state.pc = *addr as usize;
@@ -1027,8 +1033,10 @@ impl VmBuilder {
                 panic!("Unbounded expression: {e}");
             }
             EbnfExpr::LabelledExpr { label, expr } => {
-                println!("Labelled: {label}");
+                let current_len = self.len();
                 self.from(*expr, diagnostic);
+                let off = self.nodes.len() - current_len + 1;
+                self.nodes.insert(current_len, VmNode::Label(label, off as u16));
             }
         }
     }
