@@ -53,6 +53,7 @@ pub(crate) struct EbnfParser<'a> {
     tokens: Vec<Token>,
     mode: EbnfParserMode,
     cursor: usize,
+    allow_unbounded: bool,
 }
 
 impl<'a> EbnfParser<'a> {
@@ -61,6 +62,7 @@ impl<'a> EbnfParser<'a> {
         mode: EbnfParserMode,
         source_manager: &SourceManager,
         diagnostic: &Diagnostic,
+        allow_unbounded: bool,
     ) -> EbnfExpr {
         let mut parser = EbnfParser {
             source_manager,
@@ -68,10 +70,10 @@ impl<'a> EbnfParser<'a> {
             tokens,
             mode,
             cursor: 0,
+            allow_unbounded
         };
 
-        let temp = parser.parse_statements();
-        temp
+        parser.parse_statements()
     }
 
     fn is_empty(&self) -> bool {
@@ -184,10 +186,10 @@ impl<'a> EbnfParser<'a> {
         }
     }
 
-    fn parse_paren_expr(&mut self, open: TokenKind, min_bp: u8) -> Option<(EbnfExpr, Span)> {
+    fn parse_paren_expr(&mut self, open: TokenKind, min_bp: u8, labels: &mut Vec<(UniqueString, Span)>) -> Option<(EbnfExpr, Span)> {
         let close = ParenMatching::get_other_pair(open).unwrap();
 
-        if let Some((expr, e_span)) = self.parse_expr(min_bp) {
+        if let Some((expr, e_span)) = self.parse_expr(min_bp, labels) {
             if self.peek_kind() != Some(close) {
                 self.diagnostic
                     .builder()
@@ -213,7 +215,7 @@ impl<'a> EbnfParser<'a> {
         None
     }
 
-    fn parse_expr_helper(&mut self) -> Option<(EbnfExpr, Span)> {
+    fn parse_expr_helper(&mut self, labels: &mut Vec<(UniqueString, Span)>) -> Option<(EbnfExpr, Span)> {
         let token = self.peek();
         if token.is_none() {
             return None;
@@ -223,16 +225,16 @@ impl<'a> EbnfParser<'a> {
         match token.kind {
             TokenKind::OpenParen => {
                 self.next();
-                self.parse_paren_expr(TokenKind::OpenParen, 0)
+                self.parse_paren_expr(TokenKind::OpenParen, 0, labels)
             }
             TokenKind::OpenBracket => {
                 self.next();
-                self.parse_paren_expr(TokenKind::OpenBracket, 0)
+                self.parse_paren_expr(TokenKind::OpenBracket, 0, labels)
                     .map(|(expr, span)| (EbnfExpr::Optional(Box::new(expr), 1), span))
             }
             TokenKind::OpenBrace => {
                 self.next();
-                self.parse_paren_expr(TokenKind::OpenBrace, 0)
+                self.parse_paren_expr(TokenKind::OpenBrace, 0, labels)
                     .map(|(expr, span)| (EbnfExpr::Repetition(Box::new(expr), 1), span))
             }
             TokenKind::Dollar => {
@@ -271,6 +273,39 @@ impl<'a> EbnfParser<'a> {
                     return None;
                 };
 
+                let temp_id = id.clone();
+                if let Some((_, last_span)) = labels.iter().find(|(id, _)| id == &temp_id).copied() {
+                    self.diagnostic
+                        .builder()
+                        .report(
+                            DiagnosticLevel::Error,
+                            "Duplicate label",
+                            self.source_manager.get_source_info(span),
+                            None,
+                        )
+                        .add_info(
+                            "Rename the label",
+                            Some(self.source_manager.fix_span(span)),
+                        )
+                        .commit();
+
+                    self.diagnostic
+                        .builder()
+                        .report(
+                            DiagnosticLevel::Error,
+                            "Previous label",
+                            self.source_manager.get_source_info(last_span),
+                            None,
+                        )
+                        .add_info(
+                            "Previous label here",
+                            Some(self.source_manager.fix_span(last_span)),
+                        )
+                        .commit();
+                } else {
+                    labels.push((UniqueString::new(temp_id), span));
+                }
+
                 if self.peek_kind() != Some(TokenKind::Colon) {
                     self.diagnostic
                         .builder()
@@ -290,7 +325,7 @@ impl<'a> EbnfParser<'a> {
 
                 self.next();
 
-                let Some((rhs, r_span)) = self.parse_expr(0) else  {
+                let Some((rhs, r_span)) = self.parse_expr(0, labels) else  {
                     self.diagnostic
                         .builder()
                         .report(
@@ -316,8 +351,8 @@ impl<'a> EbnfParser<'a> {
         }
     }
 
-    fn parse_expr(&mut self, min_bp: u8) -> Option<(EbnfExpr, Span)> {
-        let mut lhs = self.parse_expr_helper();
+    fn parse_expr(&mut self, min_bp: u8, labels: &mut Vec<(UniqueString, Span)>) -> Option<(EbnfExpr, Span)> {
+        let mut lhs = self.parse_expr_helper(labels);
 
         loop {
             let token = self.peek();
@@ -362,7 +397,7 @@ impl<'a> EbnfParser<'a> {
 
             self.next();
 
-            if let Some((rhs, rhs_span)) = self.parse_expr(right_bp) {
+            if let Some((rhs, rhs_span)) = self.parse_expr(right_bp, labels) {
                 let (lhs_expr, lhs_span) = lhs.unwrap();
                 if matches!(op, TokenKind::Range | TokenKind::RangeEqual) {
                     if !lhs_expr.is_char() {
@@ -425,7 +460,8 @@ impl<'a> EbnfParser<'a> {
     }
 
     fn parse_statement(&mut self) -> Option<(EbnfExpr, Span)> {
-        let lhs_expr = self.parse_expr(0);
+        let mut labels = Vec::new();
+        let lhs_expr = self.parse_expr(0, &mut labels);
         if lhs_expr.is_none() {
             return None;
         }
@@ -442,8 +478,27 @@ impl<'a> EbnfParser<'a> {
         let is_equal = equal_token.kind == TokenKind::Equal;
         let is_def = equal_token.kind == TokenKind::Definition;
 
+        if !(self.allow_unbounded && self.mode == EbnfParserMode::Parser) {
+            if !lhs_expr.is_identifier() {
+                self.diagnostic
+                    .builder()
+                    .report(
+                        DiagnosticLevel::Error,
+                        "Expected identifier on the left side of expression",
+                        self.source_manager.get_source_info(span),
+                        None,
+                    )
+                    .add_info(
+                        "Try to remove expression",
+                        Some(self.source_manager.fix_span(span)),
+                    )
+                    .commit();
+                return None;
+            }
+        }
+
         if !(is_equal || is_def) {
-            if self.mode == EbnfParserMode::Parser {
+            if self.mode == EbnfParserMode::Parser && self.allow_unbounded {
                 return Some((EbnfExpr::UnboundedExpr(Box::new(lhs_expr)), span));
             }
             self.diagnostic
@@ -462,7 +517,7 @@ impl<'a> EbnfParser<'a> {
             return None;
         }
 
-        let rhs = self.parse_expr(0);
+        let rhs = self.parse_expr(0, &mut labels);
         if rhs.is_none() {
             self.diagnostic
                 .builder()
