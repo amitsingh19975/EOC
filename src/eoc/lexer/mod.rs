@@ -59,6 +59,8 @@ pub(crate) struct Lexer {
     custom_keywords_trie: Trie<u8, usize>,
     rewind_stack: Vec<usize>,
     block_lexer_matcher: HashMap<UniqueString, EbnfParserMatcher>,
+    block_parser_matcher: HashMap<UniqueString, EbnfParserMatcher>,
+    global_parser_matcher: Option<EbnfParserMatcher>,
     mode: LexerMode,
     shebang_span: Span,
 }
@@ -78,6 +80,8 @@ impl Lexer {
             block_lexer_matcher: HashMap::new(),
             mode: LexerMode::Normal,
             shebang_span: Span::default(),
+            block_parser_matcher: HashMap::new(),
+            global_parser_matcher: None,
         }
     }
 
@@ -737,7 +741,13 @@ impl Lexer {
             span.end as usize,
         );
         let tokens = enbf_lexer.lex();
-        let program = EbnfParser::parse(tokens, EbnfParserMode::Lexer, &self.source_manager, &mut self.diagnostics);
+        let program = EbnfParser::parse(
+            tokens,
+            EbnfParserMode::Lexer,
+            &self.source_manager,
+            &mut self.diagnostics,
+            false
+        );
         if let Some(name_token) = name_token {
             let name = std::str::from_utf8(&self.source_manager[name_token.span]).unwrap();
             let mut matcher = EbnfParserMatcher::new();
@@ -772,7 +782,12 @@ impl Lexer {
         }
     }
 
-    fn try_lex_using_custom_matcher(&mut self, tokens: &mut Vec<Token>, name: UniqueString, name_span: Span) -> bool {
+    fn try_lex_using_custom_matcher(
+        &mut self,
+        tokens: &mut Vec<Token>,
+        name: UniqueString,
+        name_span: Span,
+    ) -> bool {
         if !self.block_lexer_matcher.contains_key(&name) {
             self.cursor += self.skip_while_code_block_end(self.cursor).len();
             let info = self.source_manager.get_source_info(name_span);
@@ -791,7 +806,7 @@ impl Lexer {
                 .commit();
             return false;
         }
-        
+
         let code_start = self.cursor;
 
         let code_span = Span::from_usize(code_start, code_start);
@@ -821,7 +836,10 @@ impl Lexer {
             self.cursor += 3;
             code_end_span.end = self.cursor as u32;
         }
-        tokens.push(Token::new(TokenKind::CustomCodeBlockStart(name), Span::from_usize(code_start - name.as_ref().as_bytes().len() - 3, code_start)));
+        tokens.push(Token::new(
+            TokenKind::CustomCodeBlockStart(name),
+            Span::from_usize(code_start - name.as_ref().as_bytes().len() - 3, code_start),
+        ));
         tokens.extend(temp_tokens);
         tokens.push(Token::new(
             TokenKind::CustomCodeBlockEnd(name),
@@ -872,10 +890,12 @@ impl Lexer {
         Span::from_usize(start, self.cursor)
     }
 
-    fn lex_lexer_code_block<T: EbnfMatcher>(
-        &mut self,
-        matcher: &mut T
-    ) {
+    fn lex_code_block_with_name_helper<T: EbnfMatcher>(
+        &mut self, 
+        matcher: &mut T,
+        block_type: &'static str,
+    ) -> (Option<Token>, Span) 
+    {
         let mut start = self.cursor;
         let mut name_token = None;
         if self.peek_char() == Some('(') {
@@ -891,12 +911,12 @@ impl Lexer {
                     .builder()
                     .report(
                         DiagnosticLevel::Error,
-                        "Invalid lexer block name",
+                        format!("Invalid {block_type} block name"),
                         info,
                         None,
                     )
                     .add_error(
-                        "Add a name to the lexer block",
+                        format!("Add a name to the {block_type} block"),
                         Some(
                             self.source_manager
                                 .fix_span(Span::from_usize(temp_start, self.cursor + 1)),
@@ -911,12 +931,12 @@ impl Lexer {
                         .builder()
                         .report(
                             DiagnosticLevel::Error,
-                            "Invalid lexer block name",
+                            format!("Invalid {block_type} block name"),
                             info,
                             None,
                         )
                         .add_error(
-                            "Invalid lexer block name",
+                            format!("Invalid {block_type} block name"),
                             Some(self.source_manager.fix_span(token.span)),
                         )
                         .commit();
@@ -926,8 +946,73 @@ impl Lexer {
             }
             start = self.cursor;
         }
+
         let span = self.skip_while_code_block_end(start);
+        (name_token, span)
+    }
+
+    fn lex_lexer_code_block<T: EbnfMatcher>(&mut self, matcher: &mut T) {
+        let (name_token, span) = self.lex_code_block_with_name_helper(matcher, "lexer");
         self.parse_ebnf_lexer_block(matcher, name_token, span);
+    }
+
+    fn lex_parser_code_block<T: EbnfMatcher>(&mut self, matcher: &mut T) {
+        let (name_token, span) = self.lex_code_block_with_name_helper(matcher, "parser");
+        self.parse_ebnf_parser_block(name_token, span);
+    }
+
+    fn parse_ebnf_parser_block(&mut self, name_token: Option<Token>, span: Span) {
+        let mut enbf_parser = EbnfLexer::new(
+            &self.source_manager,
+            &mut self.diagnostics,
+            span.start as usize,
+            span.end as usize,
+        );
+        let tokens = enbf_parser.lex();
+        let program = EbnfParser::parse(
+            tokens,
+            EbnfParserMode::Parser,
+            &self.source_manager,
+            &mut self.diagnostics,
+            false,
+        );
+        if let Some(name_token) = name_token {
+            let name = std::str::from_utf8(&self.source_manager[name_token.span]).unwrap();
+            let mut matcher = EbnfParserMatcher::new();
+            matcher.init(
+                Some(program),
+                RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+                &mut self.diagnostics,
+            );
+            let name = UniqueString::new(name);
+            if self.block_parser_matcher.contains_key(&name) {
+                self.diagnostics
+                    .builder()
+                    .report(
+                        DiagnosticLevel::Error,
+                        "Duplicate parser block name",
+                        self.source_manager.get_source_info(name_token.span),
+                        None,
+                    )
+                    .add_error(
+                        "Change the name of the parser block",
+                        Some(self.source_manager.fix_span(name_token.span)),
+                    )
+                    .commit();
+            }
+            self.block_parser_matcher.insert(name, matcher);
+        } else {
+            let mut p = self
+                .global_parser_matcher
+                .take()
+                .unwrap_or(EbnfParserMatcher::new());
+            p.init(
+                Some(program),
+                RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+                &mut self.diagnostics,
+            );
+            self.global_parser_matcher = Some(p);
+        }
     }
 
     fn lex_back_tick<T: EbnfMatcher>(
@@ -936,7 +1021,6 @@ impl Lexer {
         tokens: &mut Vec<Token>,
         is_code_block: bool,
     ) -> bool {
-
         let is_start_code_block = ParenMatching::is_triple_back_tick_block(
             &self.source_manager.get_source(),
             self.cursor,
@@ -993,13 +1077,15 @@ impl Lexer {
         self.lex_identifier(matcher, tokens, false);
         let identifier = tokens.pop().unwrap();
         let id_span = identifier.span.clone();
-        let name = unsafe {
-            std::str::from_utf8_unchecked(self.source_manager[id_span].as_ref())
-        };
+        let name = unsafe { std::str::from_utf8_unchecked(self.source_manager[id_span].as_ref()) };
 
         if name == "lexer" {
             self.skip_whitespace().map(|t| tokens.push(t));
             self.lex_lexer_code_block(matcher);
+            return true;
+        } else if name == "parser" {
+            self.skip_whitespace().map(|t| tokens.push(t));
+            self.lex_parser_code_block(matcher);
             return true;
         }
 
@@ -1022,7 +1108,7 @@ impl Lexer {
                 .commit();
             return true;
         };
-        
+
         self.try_lex_using_custom_matcher(tokens, u_name, id_span);
 
         true
@@ -1393,23 +1479,13 @@ impl Lexer {
                         span.end = self.cursor as u32;
 
                         if !is_shebang_valid {
-                            let info = self
-                                .source_manager
-                                .get_source_info(span);
+                            let info = self.source_manager.get_source_info(span);
                             self.diagnostics
                                 .builder()
-                                .report(
-                                    DiagnosticLevel::Error,
-                                    "Invalid shebang",
-                                    info,
-                                    None,
-                                )
+                                .report(DiagnosticLevel::Error, "Invalid shebang", info, None)
                                 .add_error(
                                     "Shebang must be at the start of the file",
-                                    Some(
-                                        self.source_manager
-                                            .fix_span(span),
-                                    ),
+                                    Some(self.source_manager.fix_span(span)),
                                 )
                                 .commit();
                             continue;
@@ -1419,7 +1495,6 @@ impl Lexer {
                     } else {
                         tokens.push(Token::new(TokenKind::Hash, span));
                     }
-
                 }
                 _ => {
                     self.check_balanced_paren(&until);
