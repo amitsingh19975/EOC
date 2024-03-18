@@ -162,6 +162,7 @@ pub(crate) trait EbnfMatcher {
     );
 }
 
+#[derive(Clone)]
 pub(crate) struct DefaultEbnfParserMatcher;
 
 impl DefaultEbnfParserMatcher {
@@ -352,6 +353,7 @@ impl EbnfMatcher for DefaultEbnfParserMatcher {
     }
 }
 
+#[derive(Clone)]
 pub(crate) enum EbnfParserMatcher {
     Custom(Vm),
     Default(DefaultEbnfParserMatcher),
