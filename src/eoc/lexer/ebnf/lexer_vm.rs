@@ -17,7 +17,7 @@ use super::{
     ast::RelativeSourceManager,
     expr::{EbnfExpr, TerminalValue},
     matcher::EbnfMatcher,
-    native_call::{NativeCallKind, NATIVE_CALL_KIND_ID},
+    native_call::{LexerNativeCallKind, NATIVE_CALL_KIND_ID},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,9 +34,9 @@ impl Value {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum VmNode {
+pub(super) enum LexerVmNode {
     Call(u16, String),
-    NativeCall(NativeCallKind),
+    NativeCall(LexerNativeCallKind),
     Terminal(TerminalValue),
     TerminalHash(Vec<TerminalValue>, HashSet<TerminalValue>),
     Range(char, char, bool),
@@ -52,12 +52,11 @@ pub(super) enum VmNode {
     Optional(u16), // Optional a
     // ===========================
     Repetition(u16), // Repeat if [stack-value]
-    Label(String, u16), // Label a
 }
 
-impl VmNode {
+impl LexerVmNode {
     fn exec<'b>(
-        vm: &Vm,
+        vm: &LexerVm,
         state: &mut VmState,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
@@ -77,7 +76,7 @@ impl VmNode {
     }
 
     fn exec_helper<'b>(
-        vm: &Vm,
+        vm: &LexerVm,
         state: &mut VmState,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
@@ -86,7 +85,7 @@ impl VmNode {
         let node = &vm.nodes[state.pc];
         state.next_pc();
         match node {
-            VmNode::Terminal(t) => {
+            LexerVmNode::Terminal(t) => {
                 let slice = s[state.cursor..].as_ref();
 
                 let is_matched = match t {
@@ -101,16 +100,11 @@ impl VmNode {
                     state.push_bool(false);
                 }
             }
-            VmNode::Label(_, off) => {
-                let off = *off as usize;
-                Self::exec(vm, state, s, source_manager, diagnostic);
-                return off;
-            }
-            VmNode::Call(addr, ..) => {
+            LexerVmNode::Call(addr, ..) => {
                 state.pc = *addr as usize;
                 Self::exec(vm, state, s, source_manager, diagnostic);
             }
-            VmNode::NativeCall(k) => {
+            LexerVmNode::NativeCall(k) => {
                 if let Some(temp_s) =
                     k.call_vm(vm, s[state.cursor..].as_ref(), source_manager, diagnostic)
                 {
@@ -120,7 +114,7 @@ impl VmNode {
                     state.push_bool(false);
                 }
             }
-            VmNode::TerminalHash(v, h) => {
+            LexerVmNode::TerminalHash(v, h) => {
                 let slice = s[state.cursor..].as_ref();
                 let Some(ch) = ByteToCharIter::new(slice).next() else {
                     state.push_bool(false);
@@ -149,7 +143,7 @@ impl VmNode {
 
                 state.stack.push(Value::Bool(found));
             }
-            VmNode::Range(a, b, inclusive) => {
+            LexerVmNode::Range(a, b, inclusive) => {
                 let l = *a;
                 let r = *b;
 
@@ -175,7 +169,7 @@ impl VmNode {
                     }
                 }
             }
-            VmNode::AnyChar => {
+            LexerVmNode::AnyChar => {
                 let slice = s[state.cursor..].as_ref();
                 let Some(ch) = ByteToCharIter::new(slice).next() else {
                     state.push_bool(false);
@@ -185,7 +179,7 @@ impl VmNode {
                 state.cursor += ch.len_utf8();
                 state.push_bool(true);
             }
-            VmNode::Alternative(count, off) => {
+            LexerVmNode::Alternative(count, off) => {
                 let off = *off as usize;
                 let mut found = false;
 
@@ -201,7 +195,7 @@ impl VmNode {
                 state.push_bool(found);
                 return off;
             }
-            VmNode::Concat(count, off) => {
+            LexerVmNode::Concat(count, off) => {
                 let off = *off as usize;
                 for _ in 0..*count {
                     Self::exec(vm, state, s, source_manager, diagnostic);
@@ -215,7 +209,7 @@ impl VmNode {
                 state.push_bool(true);
                 return off;
             }
-            VmNode::Exception(count, off) => {
+            LexerVmNode::Exception(count, off) => {
                 let off = *off as usize;
                 let start_cursor = state.cursor;
                 
@@ -253,14 +247,14 @@ impl VmNode {
                 state.push_bool(start_cursor < end_cursor);
                 return off;
             }
-            VmNode::Optional(off) => {
+            LexerVmNode::Optional(off) => {
                 let off = *off as usize;
                 Self::exec(vm, state, s, source_manager, diagnostic);
                 let _ = state.pop_bool();
                 state.push_bool(true);
                 return off;
             }
-            VmNode::Repetition(off) => {
+            LexerVmNode::Repetition(off) => {
                 let off = *off as usize;
 
                 if s.is_empty() {
@@ -356,7 +350,7 @@ impl VmState {
     }
 
     #[cfg(debug_assertions)]
-    fn print_call_stack(&self, vm: &Vm) {
+    fn print_call_stack(&self, vm: &LexerVm) {
         println!("Call Stack: ============================");
         for pc in self.call_stack.iter().rev() {
             if let Some((_, s)) = vm.def_identifiers.iter().find(|(i, _)| *i == *pc) {
@@ -369,7 +363,7 @@ impl VmState {
     }
 
     #[cfg(not(debug_assertions))]
-    fn print_call_stack(&self, _vm: &Vm) {}
+    fn print_call_stack(&self, _vm: &LexerVm) {}
 
     #[cfg(debug_assertions)]
     fn push_call_stack(&mut self, id: usize) {
@@ -389,13 +383,13 @@ impl VmState {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Vm {
-    nodes: Vec<VmNode>,
+pub(crate) struct LexerVm {
+    nodes: Vec<LexerVmNode>,
     identifiers: HashMap<String, (usize, bool)>,
     def_identifiers: Vec<(usize, UniqueString)>,
 }
 
-impl Vm {
+impl LexerVm {
     pub fn new() -> Self {
         Self {
             nodes: Vec::new(),
@@ -414,7 +408,7 @@ impl Vm {
 
         let mut state = VmState::new(id);
         
-        VmNode::exec(self, &mut state, s, source_manager, diagnostic);
+        LexerVmNode::exec(self, &mut state, s, source_manager, diagnostic);
 
         let temp_s = s[..state.cursor.min(s.len())].as_ref();
 
@@ -436,7 +430,7 @@ impl Vm {
             return None;
         }
         if self
-            .match_native(NativeCallKind::StartOperator, s, source_manager, diagnostic)
+            .match_native(LexerNativeCallKind::StartOperator, s, source_manager, diagnostic)
             .is_none()
         {
             return None;
@@ -448,7 +442,7 @@ impl Vm {
             let temp_source = &s[i..];
             if self
                 .match_native(
-                    NativeCallKind::ContOperator,
+                    LexerNativeCallKind::ContOperator,
                     temp_source,
                     source_manager,
                     diagnostic,
@@ -532,7 +526,7 @@ impl Vm {
 
         if self
             .match_native(
-                NativeCallKind::StartIdentifier,
+                LexerNativeCallKind::StartIdentifier,
                 s,
                 source_manager,
                 diagnostic,
@@ -548,7 +542,7 @@ impl Vm {
             let temp_source = &s[i..(i + end).min(s.len() - 1)];
             if self
                 .match_native(
-                    NativeCallKind::ContIdentifier,
+                    LexerNativeCallKind::ContIdentifier,
                     temp_source,
                     source_manager,
                     diagnostic,
@@ -578,7 +572,7 @@ impl Vm {
     fn set_base_offset(&mut self, base_off: usize) {
         for node in self.nodes.iter_mut() {
             match node {
-                VmNode::Call(addr, _) => *addr += base_off as u16,
+                LexerVmNode::Call(addr, _) => *addr += base_off as u16,
                 _ => {}
             }
         }
@@ -592,7 +586,7 @@ impl Vm {
         }
     }
 
-    fn merge(&mut self, mut vm: Vm) {
+    fn merge(&mut self, mut vm: LexerVm) {
         let base_off = self.nodes.len();
         vm.set_base_offset(base_off);
         let mut replace_offsets = HashMap::new();
@@ -620,7 +614,7 @@ impl Vm {
     fn replace_call(&mut self, replace_offsets: HashMap<usize, usize>) {
         for node in self.nodes.iter_mut() {
             match node {
-                VmNode::Call(addr, ..) => {
+                LexerVmNode::Call(addr, ..) => {
                     if let Some(new_addr) = replace_offsets.get(&(*addr as usize)) {
                         *addr = *new_addr as u16;
                     }
@@ -639,7 +633,7 @@ impl Vm {
     }
 }
 
-impl EbnfMatcher for Vm {
+impl EbnfMatcher for LexerVm {
     fn init<'b>(
         &mut self,
         expr: Option<EbnfExpr>,
@@ -696,7 +690,7 @@ impl EbnfMatcher for Vm {
 
     fn match_native<'b>(
         &self,
-        kind: super::native_call::NativeCallKind,
+        kind: super::native_call::LexerNativeCallKind,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &Diagnostic,
@@ -764,7 +758,7 @@ impl EbnfMatcher for Vm {
                 return ByteToCharIter::new(s).next();
             }
         } else {
-            if let Some(s) = self.match_native(NativeCallKind::BinDigit, s, source_manager, diagnostic) {
+            if let Some(s) = self.match_native(LexerNativeCallKind::BinDigit, s, source_manager, diagnostic) {
                 return ByteToCharIter::new(s).next();
             }
         }
@@ -782,7 +776,7 @@ impl EbnfMatcher for Vm {
                 return ByteToCharIter::new(s).next();
             }
         } else {
-            if let Some(s) = self.match_native(NativeCallKind::Digit, s, source_manager, diagnostic) {
+            if let Some(s) = self.match_native(LexerNativeCallKind::Digit, s, source_manager, diagnostic) {
                 return ByteToCharIter::new(s).next();
             }
         }
@@ -800,7 +794,7 @@ impl EbnfMatcher for Vm {
                 return ByteToCharIter::new(s).next();
             }
         } else {
-            if let Some(s) = self.match_native(NativeCallKind::HexDigit, s, source_manager, diagnostic) {
+            if let Some(s) = self.match_native(LexerNativeCallKind::HexDigit, s, source_manager, diagnostic) {
                 return ByteToCharIter::new(s).next();
             }
         }
@@ -818,7 +812,7 @@ impl EbnfMatcher for Vm {
                 return ByteToCharIter::new(s).next();
             }
         } else {
-            if let Some(s) = self.match_native(NativeCallKind::OctDigit, s, source_manager, diagnostic) {
+            if let Some(s) = self.match_native(LexerNativeCallKind::OctDigit, s, source_manager, diagnostic) {
                 return ByteToCharIter::new(s).next();
             }
         }
@@ -827,7 +821,7 @@ impl EbnfMatcher for Vm {
 }
 
 pub(super) struct VmBuilder {
-    nodes: Vec<VmNode>,
+    nodes: Vec<LexerVmNode>,
     def_identifiers: Rc<Vec<(usize, UniqueString)>>,
     all_defined_identifiers: Rc<HashMap<String, (usize, bool)>>,
 }
@@ -841,8 +835,8 @@ impl VmBuilder {
         }
     }
 
-    pub(super) fn build(self) -> Vm {
-        Vm {
+    pub(super) fn build(self) -> LexerVm {
+        LexerVm {
             nodes: self.nodes,
             def_identifiers: Rc::try_unwrap(self.def_identifiers).unwrap(),
             identifiers: Rc::try_unwrap(self.all_defined_identifiers).unwrap(),
@@ -878,11 +872,11 @@ impl VmBuilder {
     pub(super) fn from<'b>(&mut self, value: EbnfExpr, diagnostic: &Diagnostic) {
         match value {
             EbnfExpr::Identifier(s, info) => {
-                if NativeCallKind::is_valid_name(&s) {
-                    self.nodes.push(VmNode::NativeCall(NativeCallKind::from(s.as_str())));
+                if LexerNativeCallKind::is_valid_name(&s) {
+                    self.nodes.push(LexerVmNode::NativeCall(LexerNativeCallKind::from(s.as_str())));
                 } else {
                     if let Some((id, _)) = self.get_identifier(s.as_str()) {
-                        self.nodes.push(VmNode::Call(id as u16, s));
+                        self.nodes.push(LexerVmNode::Call(id as u16, s));
                     } else {
                         if let Some((info, span)) = info {
                             diagnostic
@@ -919,7 +913,7 @@ impl VmBuilder {
                 let mut size = 0;
 
                 if !terms.is_empty() || !h.is_empty() {
-                    self.nodes.push(VmNode::TerminalHash(terms, h));
+                    self.nodes.push(LexerVmNode::TerminalHash(terms, h));
                     size += 1;
                 }
 
@@ -934,7 +928,7 @@ impl VmBuilder {
 
                 let off = self.nodes.len() - current_len + 1;
                 self.nodes
-                    .insert(current_len, VmNode::Alternative(size, off as u16));
+                    .insert(current_len, LexerVmNode::Alternative(size, off as u16));
             }
             EbnfExpr::Concat(v, _) | EbnfExpr::Extend(v, _) => {
                 let current_len = self.len();
@@ -945,7 +939,7 @@ impl VmBuilder {
 
                 let off = self.nodes.len() - current_len + 1;
                 self.nodes
-                    .insert(current_len, VmNode::Concat(size, off as u16));
+                    .insert(current_len, LexerVmNode::Concat(size, off as u16));
             }
             EbnfExpr::Exception(mut v, _) => {
                 let current_len = self.len();
@@ -980,13 +974,13 @@ impl VmBuilder {
                     }
 
                     if !terms.is_empty() || !hash.is_empty() {
-                        self.nodes.push(VmNode::TerminalHash(terms, hash));
+                        self.nodes.push(LexerVmNode::TerminalHash(terms, hash));
                         count += 1;
                     }
 
                     let off = self.len() - alternative_start + 1;
                     self.nodes
-                        .insert(alternative_start, VmNode::Alternative(count as u16, off as u16));
+                        .insert(alternative_start, LexerVmNode::Alternative(count as u16, off as u16));
                 } else {
                     let item = v.remove(0);
                     self.from(item, diagnostic);
@@ -994,23 +988,23 @@ impl VmBuilder {
 
                 let off = self.nodes.len() - current_len + 1;
                 self.nodes
-                    .insert(current_len, VmNode::Exception(size, off as u16));
+                    .insert(current_len, LexerVmNode::Exception(size, off as u16));
             }
             EbnfExpr::Optional(e, _) => {
                 let current_len = self.len();
                 self.from(*e, diagnostic);
                 let off = self.nodes.len() - current_len + 1;
-                self.nodes.insert(current_len, VmNode::Optional(off as u16));
+                self.nodes.insert(current_len, LexerVmNode::Optional(off as u16));
             }
             EbnfExpr::Repetition(e, _) => {
                 let current_len = self.len();
                 self.from(*e, diagnostic);
                 let off = self.nodes.len() - current_len + 1;
                 self.nodes
-                    .insert(current_len, VmNode::Repetition(off as u16));
+                    .insert(current_len, LexerVmNode::Repetition(off as u16));
             }
             EbnfExpr::Terminal(t) => {
-                self.nodes.push(VmNode::Terminal(t));
+                self.nodes.push(LexerVmNode::Terminal(t));
             }
             EbnfExpr::Statements(v, _) => {
                 v.into_iter().for_each(|item| self.from(item, diagnostic));
@@ -1024,20 +1018,15 @@ impl VmBuilder {
                 rhs,
                 inclusive,
             } => {
-                self.nodes.push(VmNode::Range(lhs, rhs, inclusive));
+                self.nodes.push(LexerVmNode::Range(lhs, rhs, inclusive));
             }
             EbnfExpr::AnyChar => {
-                self.nodes.push(VmNode::AnyChar);
+                self.nodes.push(LexerVmNode::AnyChar);
             }
             EbnfExpr::UnboundedExpr(e) => {
                 self.from(*e, diagnostic);
             }
-            EbnfExpr::LabelledExpr { label, expr } => {
-                let current_len = self.len();
-                self.from(*expr, diagnostic);
-                let off = self.nodes.len() - current_len + 1;
-                self.nodes.insert(current_len, VmNode::Label(label, off as u16));
-            }
+            EbnfExpr::LabelledExpr { .. } => panic!("labelled expressions not supported"),
         }
     }
 }

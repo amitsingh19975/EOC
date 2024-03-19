@@ -14,8 +14,8 @@ use crate::eoc::{
 use super::{
     ast::RelativeSourceManager,
     expr::EbnfExpr,
-    native_call::{NativeCallKind, NATIVE_CALL_KIND_ID},
-    vm::{Vm, VmBuilder},
+    native_call::{LexerNativeCallKind, NATIVE_CALL_KIND_ID},
+    lexer_vm::{LexerVm, VmBuilder},
 };
 
 pub(crate) trait EbnfMatcher {
@@ -113,7 +113,7 @@ pub(crate) trait EbnfMatcher {
 
     fn match_native<'b>(
         &self,
-        kind: NativeCallKind,
+        kind: LexerNativeCallKind,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &Diagnostic,
@@ -296,7 +296,7 @@ impl EbnfMatcher for DefaultEbnfParserMatcher {
 
     fn match_native<'b>(
         &self,
-        kind: NativeCallKind,
+        kind: LexerNativeCallKind,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &Diagnostic,
@@ -355,7 +355,7 @@ impl EbnfMatcher for DefaultEbnfParserMatcher {
 
 #[derive(Clone)]
 pub(crate) enum EbnfParserMatcher {
-    Custom(Vm),
+    Custom(LexerVm),
     Default(DefaultEbnfParserMatcher),
 }
 
@@ -446,7 +446,7 @@ impl EbnfMatcher for EbnfParserMatcher {
 
     fn match_native<'b>(
         &self,
-        kind: NativeCallKind,
+        kind: LexerNativeCallKind,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &Diagnostic,
@@ -486,8 +486,8 @@ impl EbnfMatcher for EbnfParserMatcher {
     }
 }
 
-impl From<Vm> for EbnfParserMatcher {
-    fn from(m: Vm) -> Self {
+impl From<LexerVm> for EbnfParserMatcher {
+    fn from(m: LexerVm) -> Self {
         Self::Custom(m)
     }
 }
@@ -768,7 +768,7 @@ impl EbnfMatcher for IREbnfParserMatcher {
 
     fn match_native<'b>(
         &self,
-        kind: NativeCallKind,
+        kind: LexerNativeCallKind,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &Diagnostic,

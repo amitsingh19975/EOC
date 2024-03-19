@@ -13,10 +13,10 @@ use crate::eoc::{
     utils::{diagnostic::Diagnostic, string::UniqueString},
 };
 
-use super::{ast::RelativeSourceManager, matcher::{DefaultEbnfParserMatcher, EbnfMatcher}, vm::Vm};
+use super::{ast::RelativeSourceManager, matcher::{DefaultEbnfParserMatcher, EbnfMatcher}, lexer_vm::LexerVm};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum NativeCallKind {
+pub(crate) enum LexerNativeCallKind {
     StartIdentifier,
     ContIdentifier,
     Whitespace,
@@ -34,7 +34,7 @@ pub(crate) enum NativeCallKind {
     FloatingPoint,
 }
 
-impl NativeCallKind {
+impl LexerNativeCallKind {
     pub(super) fn as_str(&self) -> &'static str {
         match self {
             Self::StartIdentifier => "start_identifier",
@@ -174,7 +174,7 @@ impl NativeCallKind {
 
     pub(super) fn call_vm<'b>(
         &self,
-        vm: &Vm,
+        vm: &LexerVm,
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &Diagnostic,
@@ -295,19 +295,19 @@ impl NativeCallKind {
     }
 }
 
-impl Debug for NativeCallKind {
+impl Debug for LexerNativeCallKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "<Native Call='{}'>", self.as_str())
     }
 }
 
-impl Display for NativeCallKind {
+impl Display for LexerNativeCallKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.as_str())
     }
 }
 
-impl From<&str> for NativeCallKind {
+impl From<&str> for LexerNativeCallKind {
     fn from(s: &str) -> Self {
         match s {
             "start_identifier" => Self::StartIdentifier,
@@ -330,13 +330,13 @@ impl From<&str> for NativeCallKind {
     }
 }
 
-impl From<String> for NativeCallKind {
+impl From<String> for LexerNativeCallKind {
     fn from(s: String) -> Self {
-        NativeCallKind::from(s.as_str())
+        LexerNativeCallKind::from(s.as_str())
     }
 }
 
-impl PartialEq<str> for NativeCallKind {
+impl PartialEq<str> for LexerNativeCallKind {
     fn eq(&self, other: &str) -> bool {
         self.as_str() == other
     }
@@ -358,10 +358,10 @@ pub(crate) struct NativeCallKindId {
 impl NativeCallKindId {
     pub(crate) fn new() -> Self {
         Self {
-            is_digit: UniqueString::new(NativeCallKind::Digit.as_str()),
-            is_hex_digit: UniqueString::new(NativeCallKind::HexDigit.as_str()),
-            is_oct_digit: UniqueString::new(NativeCallKind::OctDigit.as_str()),
-            is_binary_digit: UniqueString::new(NativeCallKind::BinDigit.as_str()),
+            is_digit: UniqueString::new(LexerNativeCallKind::Digit.as_str()),
+            is_hex_digit: UniqueString::new(LexerNativeCallKind::HexDigit.as_str()),
+            is_oct_digit: UniqueString::new(LexerNativeCallKind::OctDigit.as_str()),
+            is_binary_digit: UniqueString::new(LexerNativeCallKind::BinDigit.as_str()),
             identifier_sym: UniqueString::new("identifier"),
             operator_sym: UniqueString::new("operator"),
             integer_sym: UniqueString::new("integer"),

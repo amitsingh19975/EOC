@@ -305,7 +305,7 @@ impl Lexer {
     ///                          (\.[0-9A-Fa-f][0-9A-Fa-f_]*)?[pP][+-]?[0-9][0-9_]*
     fn lex_number<T: EbnfMatcher>(&mut self, matcher: &T, tokens: &mut Vec<Token>) -> bool {
         let temp = matcher.match_native(
-            ebnf::native_call::NativeCallKind::Integer,
+            ebnf::native_call::LexerNativeCallKind::Integer,
             &self.source_manager.get_source()[self.cursor..],
             RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
             &mut self.diagnostics,
@@ -320,7 +320,7 @@ impl Lexer {
         }
 
         let temp = matcher.match_native(
-            ebnf::native_call::NativeCallKind::FloatingPoint,
+            ebnf::native_call::LexerNativeCallKind::FloatingPoint,
             &self.source_manager.get_source()[self.cursor..],
             RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
             &mut self.diagnostics,
@@ -1197,7 +1197,7 @@ impl Lexer {
         // println!("str: {:?}", std::str::from_utf8(&self.source_manager.get_source()[self.cursor..]);
         matcher
             .match_native(
-                ebnf::native_call::NativeCallKind::StartIdentifier,
+                ebnf::native_call::LexerNativeCallKind::StartIdentifier,
                 &self.source_manager.get_source()[self.cursor..],
                 RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
                 &mut self.diagnostics,
@@ -1208,7 +1208,7 @@ impl Lexer {
     fn is_valid_digit<T: EbnfMatcher>(&mut self, matcher: &T) -> bool {
         matcher
             .match_native(
-                ebnf::native_call::NativeCallKind::Digit,
+                ebnf::native_call::LexerNativeCallKind::Digit,
                 &self.source_manager.get_source()[self.cursor..],
                 RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
                 &mut self.diagnostics,
@@ -1219,7 +1219,7 @@ impl Lexer {
     fn is_valid_operator_start<T: EbnfMatcher>(&mut self, matcher: &T) -> bool {
         matcher
             .match_native(
-                ebnf::native_call::NativeCallKind::StartOperator,
+                ebnf::native_call::LexerNativeCallKind::StartOperator,
                 &self.source_manager.get_source()[self.cursor..],
                 RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
                 &mut self.diagnostics,
