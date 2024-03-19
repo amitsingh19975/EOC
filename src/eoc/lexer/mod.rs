@@ -16,16 +16,15 @@ use self::{
     },
 };
 use super::{
-    ast::identifier::Identifier,
-    utils::{
+    ast::identifier::Identifier, parser::ebnf::parser_matcher::ParserEbnfParserMatcher, utils::{
         diagnostic::{Diagnostic, DiagnosticLevel},
         source_manager::SourceManager,
         span::Span,
         string::UniqueString,
         trie::Trie,
-    },
+    }
 };
-use std::{collections::HashMap, path::Path, vec};
+use std::{collections::HashMap, path::Path, rc::Rc, vec};
 pub(crate) mod ebnf;
 pub(crate) mod number;
 pub(crate) mod str_utils;
@@ -59,8 +58,8 @@ pub(crate) struct Lexer {
     custom_keywords_trie: Trie<u8, usize>,
     rewind_stack: Vec<usize>,
     block_lexer_matcher: HashMap<UniqueString, LexerEbnfParserMatcher>,
-    block_parser_matcher: HashMap<UniqueString, LexerEbnfParserMatcher>,
-    global_parser_matcher: Option<LexerEbnfParserMatcher>,
+    block_parser_matcher: HashMap<UniqueString, ParserEbnfParserMatcher>,
+    global_parser_matcher: Rc<ParserEbnfParserMatcher>,
     mode: LexerMode,
     shebang_span: Span,
 }
@@ -81,7 +80,7 @@ impl Lexer {
             mode: LexerMode::Normal,
             shebang_span: Span::default(),
             block_parser_matcher: HashMap::new(),
-            global_parser_matcher: None,
+            global_parser_matcher: Rc::new(ParserEbnfParserMatcher::default()),
         }
     }
 
@@ -978,12 +977,6 @@ impl Lexer {
         );
         if let Some(name_token) = name_token {
             let name = std::str::from_utf8(&self.source_manager[name_token.span]).unwrap();
-            let mut matcher = LexerEbnfParserMatcher::new();
-            matcher.init(
-                Some(program),
-                RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
-                &mut self.diagnostics,
-            );
             let name = UniqueString::new(name);
             if self.block_parser_matcher.contains_key(&name) {
                 self.diagnostics
@@ -1000,18 +993,12 @@ impl Lexer {
                     )
                     .commit();
             }
+
+            let matcher = ParserEbnfParserMatcher::new(None, program, &self.diagnostics);
             self.block_parser_matcher.insert(name, matcher);
         } else {
-            let mut p = self
-                .global_parser_matcher
-                .take()
-                .unwrap_or(LexerEbnfParserMatcher::new());
-            p.init(
-                Some(program),
-                RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
-                &mut self.diagnostics,
-            );
-            self.global_parser_matcher = Some(p);
+            let p = ParserEbnfParserMatcher::new(Some(self.global_parser_matcher.clone()), program, &self.diagnostics);
+            self.global_parser_matcher = Rc::new(p);
         }
     }
 
