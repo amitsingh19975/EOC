@@ -1023,9 +1023,7 @@ impl VmBuilder {
             EbnfExpr::AnyChar => {
                 self.nodes.push(LexerVmNode::AnyChar);
             }
-            EbnfExpr::UnboundedExpr(e) => {
-                self.from(*e, diagnostic);
-            }
+            EbnfExpr::UnboundedExpr(_) => panic!("Unbounded expressions not supported"),
             EbnfExpr::LabelledExpr { .. } => panic!("labelled expressions not supported"),
         }
     }
