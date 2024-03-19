@@ -89,7 +89,7 @@ impl ParserVm {
     }
 
     fn get_identifier_with_scope<'a>(&self, name: &UniqueString, scopes: &'a ParserEbnfParserMatcher) -> Option<(usize, Option<Rc<ParserEbnfParserMatcherInner>>)> {
-        if let Some(id) =  self.identifiers.get(name).map(|(index, _)| *index) {
+        if let Some((id, _)) =  self.identifiers.get(name).copied() {
             return Some((id, None))
         }
 

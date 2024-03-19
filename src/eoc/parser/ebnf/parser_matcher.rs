@@ -177,6 +177,10 @@ impl ParserEbnfParserMatcher {
     }
 
     pub(super) fn get_identifier_with_scope(&self, name: &UniqueString) -> Option<(usize, Rc<ParserEbnfParserMatcherInner>)> {
+        if let Some(id) = self.current_scope.get_identifier(name) {
+            return Some((id, self.current_scope.clone()));
+        }
+
         let mut scope = self;
         while let Some(parent_scope) = scope.parent_scope.as_ref() {
             if let Some(id) = parent_scope.current_scope.get_identifier(name) {
