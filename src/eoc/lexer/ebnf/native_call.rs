@@ -13,7 +13,7 @@ use crate::eoc::{
     utils::{diagnostic::Diagnostic, string::UniqueString},
 };
 
-use super::{ast::RelativeSourceManager, matcher::{DefaultEbnfParserMatcher, EbnfMatcher}, lexer_vm::LexerVm};
+use super::{ast::RelativeSourceManager, lexer_matcher::{DefaultLexerEbnfParserMatcher, LexerEbnfMatcher}, lexer_vm::LexerVm};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum LexerNativeCallKind {
@@ -55,7 +55,7 @@ impl LexerNativeCallKind {
         }
     }
 
-    pub(super) fn call<'b, T: EbnfMatcher>(
+    pub(super) fn call<'b, T: LexerEbnfMatcher>(
         &self,
         matcher: &T,
         s: &'b [u8],
@@ -68,14 +68,14 @@ impl LexerNativeCallKind {
 
         match self {
             Self::StartIdentifier => {
-                if DefaultEbnfParserMatcher::is_valid_identifier_start_code_point(c) {
+                if DefaultLexerEbnfParserMatcher::is_valid_identifier_start_code_point(c) {
                     Some(&s[..c.len_utf8()])
                 } else {
                     None
                 }
             }
             Self::ContIdentifier => {
-                if DefaultEbnfParserMatcher::is_valid_identifier_continuation_code_point(c) {
+                if DefaultLexerEbnfParserMatcher::is_valid_identifier_continuation_code_point(c) {
                     Some(&s[..c.len_utf8()])
                 } else {
                     None
@@ -145,14 +145,14 @@ impl LexerNativeCallKind {
                 }
             }
             Self::StartOperator => {
-                if DefaultEbnfParserMatcher::is_operator_start_code_point(c) {
+                if DefaultLexerEbnfParserMatcher::is_operator_start_code_point(c) {
                     Some(&s[..c.len_utf8()])
                 } else {
                     None
                 }
             }
             Self::ContOperator => {
-                if DefaultEbnfParserMatcher::is_operator_continuation_code_point(c) {
+                if DefaultLexerEbnfParserMatcher::is_operator_continuation_code_point(c) {
                     Some(&s[..c.len_utf8()])
                 } else {
                     None

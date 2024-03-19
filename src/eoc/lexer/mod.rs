@@ -6,7 +6,7 @@ use self::{
     ebnf::{
         ast::{EbnfParserMode, RelativeSourceManager},
         lexer::EbnfLexer,
-        matcher::{EbnfMatcher, EbnfParserMatcher, IREbnfParserMatcher},
+        lexer_matcher::{LexerEbnfMatcher, LexerEbnfParserMatcher, IRLexerEbnfParserMatcher},
     },
     token::{Token, TokenKind},
     utils::{
@@ -58,9 +58,9 @@ pub(crate) struct Lexer {
     custom_operators_trie: Trie<u8, usize>,
     custom_keywords_trie: Trie<u8, usize>,
     rewind_stack: Vec<usize>,
-    block_lexer_matcher: HashMap<UniqueString, EbnfParserMatcher>,
-    block_parser_matcher: HashMap<UniqueString, EbnfParserMatcher>,
-    global_parser_matcher: Option<EbnfParserMatcher>,
+    block_lexer_matcher: HashMap<UniqueString, LexerEbnfParserMatcher>,
+    block_parser_matcher: HashMap<UniqueString, LexerEbnfParserMatcher>,
+    global_parser_matcher: Option<LexerEbnfParserMatcher>,
     mode: LexerMode,
     shebang_span: Span,
 }
@@ -245,7 +245,7 @@ impl Lexer {
         false
     }
 
-    fn lex_identifier<T: EbnfMatcher>(
+    fn lex_identifier<T: LexerEbnfMatcher>(
         &mut self,
         matcher: &T,
         tokens: &mut Vec<Token>,
@@ -281,7 +281,7 @@ impl Lexer {
         }
     }
 
-    fn lex_operator<T: EbnfMatcher>(&mut self, matcher: &T, tokens: &mut Vec<Token>) {
+    fn lex_operator<T: LexerEbnfMatcher>(&mut self, matcher: &T, tokens: &mut Vec<Token>) {
         if let Some(slice) = matcher.match_operator(
             &self.source_manager.get_source()[self.cursor..],
             RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
@@ -303,7 +303,7 @@ impl Lexer {
     ///   floating_literal ::= [0-9][0-9_]*[eE][+-]?[0-9][0-9_]*
     ///   floating_literal ::= 0x[0-9A-Fa-f][0-9A-Fa-f_]*
     ///                          (\.[0-9A-Fa-f][0-9A-Fa-f_]*)?[pP][+-]?[0-9][0-9_]*
-    fn lex_number<T: EbnfMatcher>(&mut self, matcher: &T, tokens: &mut Vec<Token>) -> bool {
+    fn lex_number<T: LexerEbnfMatcher>(&mut self, matcher: &T, tokens: &mut Vec<Token>) -> bool {
         let temp = matcher.match_native(
             ebnf::native_call::LexerNativeCallKind::Integer,
             &self.source_manager.get_source()[self.cursor..],
@@ -336,11 +336,11 @@ impl Lexer {
         false
     }
 
-    fn lex_formatting_string<T: EbnfMatcher>(&mut self, matcher: &mut T) -> Vec<Token> {
+    fn lex_formatting_string<T: LexerEbnfMatcher>(&mut self, matcher: &mut T) -> Vec<Token> {
         self.lex_helper(matcher, vec!['}'], false, false)
     }
 
-    fn lex_double_quoted_string<T: EbnfMatcher>(
+    fn lex_double_quoted_string<T: LexerEbnfMatcher>(
         &mut self,
         matcher: &mut T,
         tokens: &mut Vec<Token>,
@@ -728,7 +728,7 @@ impl Lexer {
         next == '/' || next == '*'
     }
 
-    fn parse_ebnf_lexer_block<T: EbnfMatcher>(
+    fn parse_ebnf_lexer_block<T: LexerEbnfMatcher>(
         &mut self,
         matcher: &mut T,
         name_token: Option<Token>,
@@ -750,7 +750,7 @@ impl Lexer {
         );
         if let Some(name_token) = name_token {
             let name = std::str::from_utf8(&self.source_manager[name_token.span]).unwrap();
-            let mut matcher = EbnfParserMatcher::new();
+            let mut matcher = LexerEbnfParserMatcher::new();
             matcher.init(
                 Some(program),
                 RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
@@ -890,7 +890,7 @@ impl Lexer {
         Span::from_usize(start, self.cursor)
     }
 
-    fn lex_code_block_with_name_helper<T: EbnfMatcher>(
+    fn lex_code_block_with_name_helper<T: LexerEbnfMatcher>(
         &mut self, 
         matcher: &mut T,
         block_type: &'static str,
@@ -951,12 +951,12 @@ impl Lexer {
         (name_token, span)
     }
 
-    fn lex_lexer_code_block<T: EbnfMatcher>(&mut self, matcher: &mut T) {
+    fn lex_lexer_code_block<T: LexerEbnfMatcher>(&mut self, matcher: &mut T) {
         let (name_token, span) = self.lex_code_block_with_name_helper(matcher, "lexer");
         self.parse_ebnf_lexer_block(matcher, name_token, span);
     }
 
-    fn lex_parser_code_block<T: EbnfMatcher>(&mut self, matcher: &mut T) {
+    fn lex_parser_code_block<T: LexerEbnfMatcher>(&mut self, matcher: &mut T) {
         let (name_token, span) = self.lex_code_block_with_name_helper(matcher, "parser");
         self.parse_ebnf_parser_block(name_token, span);
     }
@@ -978,7 +978,7 @@ impl Lexer {
         );
         if let Some(name_token) = name_token {
             let name = std::str::from_utf8(&self.source_manager[name_token.span]).unwrap();
-            let mut matcher = EbnfParserMatcher::new();
+            let mut matcher = LexerEbnfParserMatcher::new();
             matcher.init(
                 Some(program),
                 RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
@@ -1005,7 +1005,7 @@ impl Lexer {
             let mut p = self
                 .global_parser_matcher
                 .take()
-                .unwrap_or(EbnfParserMatcher::new());
+                .unwrap_or(LexerEbnfParserMatcher::new());
             p.init(
                 Some(program),
                 RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
@@ -1015,7 +1015,7 @@ impl Lexer {
         }
     }
 
-    fn lex_back_tick<T: EbnfMatcher>(
+    fn lex_back_tick<T: LexerEbnfMatcher>(
         &mut self,
         matcher: &mut T,
         tokens: &mut Vec<Token>,
@@ -1193,7 +1193,7 @@ impl Lexer {
         }
     }
 
-    fn is_start_of_identifier<T: EbnfMatcher>(&mut self, matcher: &T) -> bool {
+    fn is_start_of_identifier<T: LexerEbnfMatcher>(&mut self, matcher: &T) -> bool {
         // println!("str: {:?}", std::str::from_utf8(&self.source_manager.get_source()[self.cursor..]);
         matcher
             .match_native(
@@ -1205,7 +1205,7 @@ impl Lexer {
             .is_some()
     }
 
-    fn is_valid_digit<T: EbnfMatcher>(&mut self, matcher: &T) -> bool {
+    fn is_valid_digit<T: LexerEbnfMatcher>(&mut self, matcher: &T) -> bool {
         matcher
             .match_native(
                 ebnf::native_call::LexerNativeCallKind::Digit,
@@ -1216,7 +1216,7 @@ impl Lexer {
             .is_some()
     }
 
-    fn is_valid_operator_start<T: EbnfMatcher>(&mut self, matcher: &T) -> bool {
+    fn is_valid_operator_start<T: LexerEbnfMatcher>(&mut self, matcher: &T) -> bool {
         matcher
             .match_native(
                 ebnf::native_call::LexerNativeCallKind::StartOperator,
@@ -1227,7 +1227,7 @@ impl Lexer {
             .is_some()
     }
 
-    fn lex_helper<T: EbnfMatcher>(
+    fn lex_helper<T: LexerEbnfMatcher>(
         &mut self,
         matcher: &mut T,
         until: Vec<char>,
@@ -1520,7 +1520,7 @@ impl Lexer {
 
     fn lex_ir_mode(&mut self, is_file: bool) -> Vec<Token> {
         let mut tokens = Vec::new();
-        let mut matcher = IREbnfParserMatcher::new();
+        let mut matcher = IRLexerEbnfParserMatcher::new();
         let old_parens = self.paren_balance.clone();
         self.paren_balance.clear();
 
@@ -1546,7 +1546,7 @@ impl Lexer {
             let source = &self.source_manager.get_source()[self.cursor..];
 
             match ch {
-                _ if IREbnfParserMatcher::is_valid_number_start_code_point(ch) => {
+                _ if IRLexerEbnfParserMatcher::is_valid_number_start_code_point(ch) => {
                     let start = self.cursor;
                     if let Some((s, t)) =
                         matcher.match_number(source, relative_manager, &mut self.diagnostics)
@@ -1573,7 +1573,7 @@ impl Lexer {
                         self.next_char();
                     }
                 }
-                _ if IREbnfParserMatcher::is_valid_identifier_start_code_point(ch) => {
+                _ if IRLexerEbnfParserMatcher::is_valid_identifier_start_code_point(ch) => {
                     let id = matcher.match_identifier(
                         source,
                         RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
@@ -2255,7 +2255,7 @@ impl Lexer {
     }
 
     pub fn lex(&mut self) -> Vec<Token> {
-        let mut matcher = EbnfParserMatcher::new();
+        let mut matcher = LexerEbnfParserMatcher::new();
         let relative = RelativeSourceManager::new(&self.source_manager, self.cursor as u32);
         matcher.init(None, relative, &mut self.diagnostics);
         let cursor = self.cursor;

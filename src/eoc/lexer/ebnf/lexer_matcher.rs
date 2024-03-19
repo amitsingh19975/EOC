@@ -18,7 +18,7 @@ use super::{
     lexer_vm::{LexerVm, VmBuilder},
 };
 
-pub(crate) trait EbnfMatcher {
+pub(crate) trait LexerEbnfMatcher {
     fn is_digit<'b>(
         &self,
         s: &'b [u8],
@@ -163,9 +163,9 @@ pub(crate) trait EbnfMatcher {
 }
 
 #[derive(Clone)]
-pub(crate) struct DefaultEbnfParserMatcher;
+pub(crate) struct DefaultLexerEbnfParserMatcher;
 
-impl DefaultEbnfParserMatcher {
+impl DefaultLexerEbnfParserMatcher {
     pub(crate) fn new() -> Self {
         Self
     }
@@ -267,7 +267,7 @@ impl DefaultEbnfParserMatcher {
     }
 }
 
-impl EbnfMatcher for DefaultEbnfParserMatcher {
+impl LexerEbnfMatcher for DefaultLexerEbnfParserMatcher {
     fn init<'b>(
         &mut self,
         _expr: Option<EbnfExpr>,
@@ -302,7 +302,7 @@ impl EbnfMatcher for DefaultEbnfParserMatcher {
         diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         kind.call(
-            &DefaultEbnfParserMatcher::new(),
+            &DefaultLexerEbnfParserMatcher::new(),
             s,
             source_manager,
             diagnostic,
@@ -354,18 +354,18 @@ impl EbnfMatcher for DefaultEbnfParserMatcher {
 }
 
 #[derive(Clone)]
-pub(crate) enum EbnfParserMatcher {
+pub(crate) enum LexerEbnfParserMatcher {
     Custom(LexerVm),
-    Default(DefaultEbnfParserMatcher),
+    Default(DefaultLexerEbnfParserMatcher),
 }
 
-impl EbnfParserMatcher {
+impl LexerEbnfParserMatcher {
     pub(crate) fn new() -> Self {
-        Self::Default(DefaultEbnfParserMatcher::new())
+        Self::Default(DefaultLexerEbnfParserMatcher::new())
     }
 }
 
-impl EbnfMatcher for EbnfParserMatcher {
+impl LexerEbnfMatcher for LexerEbnfParserMatcher {
     fn init<'b>(
         &mut self,
         expr: Option<EbnfExpr>,
@@ -486,21 +486,21 @@ impl EbnfMatcher for EbnfParserMatcher {
     }
 }
 
-impl From<LexerVm> for EbnfParserMatcher {
+impl From<LexerVm> for LexerEbnfParserMatcher {
     fn from(m: LexerVm) -> Self {
         Self::Custom(m)
     }
 }
 
-impl From<DefaultEbnfParserMatcher> for EbnfParserMatcher {
-    fn from(m: DefaultEbnfParserMatcher) -> Self {
+impl From<DefaultLexerEbnfParserMatcher> for LexerEbnfParserMatcher {
+    fn from(m: DefaultLexerEbnfParserMatcher) -> Self {
         Self::Default(m)
     }
 }
 
-pub(crate) struct IREbnfParserMatcher;
+pub(crate) struct IRLexerEbnfParserMatcher;
 
-impl IREbnfParserMatcher {
+impl IRLexerEbnfParserMatcher {
     pub(crate) fn new() -> Self {
         Self
     }
@@ -525,7 +525,7 @@ impl IREbnfParserMatcher {
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &Diagnostic,
     ) -> Option<(&'b [u8], TokenKind)> {
-        let def = DefaultEbnfParserMatcher::new();
+        let def = DefaultLexerEbnfParserMatcher::new();
         if let Some(s) = def.match_native_integer(s, source_manager, diagnostic) {
             return Some((s, TokenKind::Integer));
         }
@@ -720,7 +720,7 @@ impl IREbnfParserMatcher {
     }
 }
 
-impl EbnfMatcher for IREbnfParserMatcher {
+impl LexerEbnfMatcher for IRLexerEbnfParserMatcher {
     fn match_operator<'b>(
         &self,
         _s: &'b [u8],
@@ -746,7 +746,7 @@ impl EbnfMatcher for IREbnfParserMatcher {
             return None;
         };
 
-        if !IREbnfParserMatcher::is_valid_identifier_start_code_point(c) {
+        if !IRLexerEbnfParserMatcher::is_valid_identifier_start_code_point(c) {
             return None;
         }
 
@@ -754,7 +754,7 @@ impl EbnfMatcher for IREbnfParserMatcher {
 
         while i < s.len() {
             if let Some(c) = iter.next() {
-                if !IREbnfParserMatcher::is_valid_identifier_continuation_code_point(c) {
+                if !IRLexerEbnfParserMatcher::is_valid_identifier_continuation_code_point(c) {
                     return Some(&s[..i]);
                 }
                 i += c.len_utf8();
@@ -774,7 +774,7 @@ impl EbnfMatcher for IREbnfParserMatcher {
         diagnostic: &Diagnostic,
     ) -> Option<&'b [u8]> {
         kind.call(
-            &IREbnfParserMatcher::new(),
+            &IRLexerEbnfParserMatcher::new(),
             s,
             source_manager,
             diagnostic,

@@ -16,7 +16,7 @@ use crate::eoc::{
 use super::{
     ast::RelativeSourceManager,
     expr::{EbnfExpr, TerminalValue},
-    matcher::EbnfMatcher,
+    lexer_matcher::LexerEbnfMatcher,
     native_call::{LexerNativeCallKind, NATIVE_CALL_KIND_ID},
 };
 
@@ -633,7 +633,7 @@ impl LexerVm {
     }
 }
 
-impl EbnfMatcher for LexerVm {
+impl LexerEbnfMatcher for LexerVm {
     fn init<'b>(
         &mut self,
         expr: Option<EbnfExpr>,
