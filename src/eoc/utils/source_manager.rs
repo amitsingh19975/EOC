@@ -18,6 +18,15 @@ pub(crate) struct SourceManagerDiagnosticInfo {
     pub(crate) column: usize,
 }
 
+impl SourceManagerDiagnosticInfo {
+    pub(crate) fn is_valid(&self) -> bool {
+        if self.source.is_empty() {
+            return false;
+        }
+        true
+    }
+}
+
 impl SourceManager {
     pub(crate) fn new<P: AsRef<Path>>(path: P) -> Result<Self, std::io::Error> {
         let path = path.as_ref().to_path_buf();

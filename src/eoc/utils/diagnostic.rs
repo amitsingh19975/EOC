@@ -195,10 +195,14 @@ macro_rules! print_message_fn {
                 writeln!(f, "{}: {}", message.level.to_string(is_redirecting).bold_ext(is_redirecting), message.message.bold_ext(is_redirecting))?;
             }
 
+            if !base.source_info.is_valid() {
+                return writeln!(f, "{}{}\n", "  --> ".magenta_ext(is_redirecting), filepath.display());
+            }
+
             let line_number = format!("{}", base.source_info.line);
             let line_number_width = line_number.len() + 2;
             let line_number = line_number.bold_ext(is_redirecting).magenta_ext(is_redirecting);
-    
+            
             writeln!(f, "{}{}:{}:{}", "  --> ".magenta_ext(is_redirecting), filepath.display(), base.source_info.line, base.source_info.column + 1)?;
             writeln!(f, "{:width$}{}", ' ', "|".magenta_ext(is_redirecting), width=line_number_width)?;
             
