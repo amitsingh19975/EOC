@@ -169,16 +169,23 @@ impl<'a> EbnfParser<'a> {
         let token = self.next().unwrap().clone();
         let span = token.span;
         match token.kind {
-            TokenKind::Identifier => Some((
-                EbnfExpr::Identifier(
-                    self.get_string_from_token(&token),
+            TokenKind::Identifier => {
+                let name = self.get_string_from_token(&token);
+                if name == "debug_print" {
+                    Some((EbnfExpr::DebugPrint, span))
+                } else {
                     Some((
-                        self.source_manager.get_source_info(span),
-                        self.source_manager.fix_span(span),
-                    )),
-                ),
-                span,
-            )),
+                        EbnfExpr::Identifier(
+                            name,
+                            Some((
+                                self.source_manager.get_source_info(span),
+                                self.source_manager.fix_span(span),
+                            )),
+                        ),
+                        span,
+                    ))
+                }
+            },
             TokenKind::Terminal => Some(self.get_terminal_from_token(&token)),
             TokenKind::Dot => Some((EbnfExpr::AnyChar, span)),
             TokenKind::Semicolon => None,
@@ -466,6 +473,10 @@ impl<'a> EbnfParser<'a> {
             return None;
         }
         let (mut lhs_expr, mut span) = lhs_expr.unwrap();
+
+        if lhs_expr.is_debug_print() {
+            return Some((lhs_expr, span));
+        }
 
         let equal_token = self.next();
 

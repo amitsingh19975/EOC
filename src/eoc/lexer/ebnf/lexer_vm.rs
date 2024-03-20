@@ -52,6 +52,7 @@ pub(super) enum LexerVmNode {
     Optional(u16), // Optional a
     // ===========================
     Repetition(u16), // Repeat if [stack-value]
+    DebugPrint, // Debug print the VM code
 }
 
 impl LexerVmNode {
@@ -290,6 +291,9 @@ impl LexerVmNode {
                     .push(Value::Bool(old_cursor != state.cursor));
 
                 return off;
+            }
+            LexerVmNode::DebugPrint => {
+                // Do nothing
             }
         }
         1
@@ -558,7 +562,11 @@ impl LexerVm {
     }
 
     pub(super) fn print(&self) {
-        for (i, node) in self.nodes.iter().enumerate() {
+        self.print_in_range(0, self.nodes.len());
+    }
+
+    pub(super) fn print_in_range(&self, start: usize, end: usize) {
+        for (i, node) in self.nodes[start..end.min(self.nodes.len())].iter().enumerate() {
             if let Some((s, _)) = self.identifiers.iter().find(|(_, p)| p.0 == i) {
                 println!("{:04}: {:?} => {}", i, node, s);
             } else {
@@ -869,6 +877,18 @@ impl VmBuilder {
         self.nodes.is_empty()
     }
 
+    pub(super) fn print_in_range(&self, start: usize, end: usize) {
+        for (i, node) in self.nodes[start..end.min(self.nodes.len())].iter().enumerate() {
+            if let Some((s, _)) = self.all_defined_identifiers.iter().find(|(_, p)| p.0 == i) {
+                println!("{:04}: {:?} => {}", i, node, s);
+            } else {
+                println!("{:04}: {:?}", i, node);
+            }
+            
+        }
+        println!("\nIdentifiers: {:?}", self.def_identifiers);
+    }
+
     pub(super) fn from<'b>(&mut self, value: EbnfExpr, diagnostic: &Diagnostic) {
         match value {
             EbnfExpr::Identifier(s, info) => {
@@ -1025,6 +1045,9 @@ impl VmBuilder {
             }
             EbnfExpr::UnboundedExpr(_) => panic!("Unbounded expressions not supported"),
             EbnfExpr::LabelledExpr { .. } => panic!("labelled expressions not supported"),
+            EbnfExpr::DebugPrint => {
+                self.print_in_range(0, self.len());
+            }
         }
     }
 }

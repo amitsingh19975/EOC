@@ -142,6 +142,7 @@ pub(crate) enum EbnfExpr {
         inclusive: bool,
     },
     AnyChar,
+    DebugPrint,
 }
 
 impl EbnfExpr {
@@ -190,6 +191,13 @@ impl EbnfExpr {
     pub(super) fn is_identifier(&self) -> bool {
         match self {
             EbnfExpr::Identifier(_, _) => true,
+            _ => false,
+        }
+    }
+
+    pub(super) fn is_debug_print(&self) -> bool {
+        match self {
+            EbnfExpr::DebugPrint => true,
             _ => false,
         }
     }
@@ -405,6 +413,7 @@ impl Display for EbnfExpr {
             }
             EbnfExpr::AnyChar => write!(f, "."),
             EbnfExpr::LabelledExpr { label, expr } => write!(f, "{}: {}", label, expr),
+            EbnfExpr::DebugPrint => write!(f, "debug_print"),
         }
     }
 }

@@ -26,6 +26,7 @@ enum ParserVmNode {
     // ===========================
     Repetition(u16), // Repeat
     Label(UniqueString, u16), // Label a
+    DebugPrint // Debug print the Vm code
 }
 
 impl Display for ParserVmNode {
@@ -43,6 +44,7 @@ impl Display for ParserVmNode {
             ParserVmNode::Optional(a) => write!(f, "Optional({})", a),
             ParserVmNode::Repetition(a) => write!(f, "Repetition({})", a),
             ParserVmNode::Label(a, b) => write!(f, "Label({}, {})", a, b),
+            ParserVmNode::DebugPrint => write!(f, "DebugPrint"),
         }
     }
 }
@@ -74,17 +76,13 @@ impl ParserVm {
         self.identifiers.get(name).map(|(_, is_def)| *is_def).unwrap_or(false)
     }
 
-    pub(super) fn add_def(&mut self, name: UniqueString, index: usize, is_def: bool, diagnostic: &Diagnostic) {
-        if let Some((_, is_def)) = self.identifiers.get(&name).copied() {
-            if is_def {
-                diagnostic.builder()
-                    .report(DiagnosticLevel::Error, format!("Identifier '{}' is already defined", name), SourceManagerDiagnosticInfo::default(), None)
-                    .add_info("Try to use a different name", None)
-                    .add_info(format!("Or you could replace '{name} ::=' with '{name} =' if you want to override variable"), None)
-                    .commit();
-            }
+    pub(super) fn add_def(&mut self, name: UniqueString, index: usize, is_def: bool) -> Option<usize> {
+        if let Some((id, is_def)) = self.identifiers.get(&name).copied() {
+            self.identifiers.insert(name, (index, is_def));
+            Some(id)
         } else {
             self.identifiers.insert(name, (index, is_def));
+            None
         }
     }
 
@@ -256,8 +254,17 @@ impl ParserVm {
             },
             EbnfExpr::Variable { name, expr, is_def } => {
                 let off = self.len();
-                self.add_def(UniqueString::new(name), off, is_def, diagnostic);
+                let old_id = self.add_def(UniqueString::new(name), off, is_def);
                 self.from(*expr, scopes, diagnostic);
+                if let Some(old_id) = old_id {
+                    self.nodes[off..].iter_mut().for_each(|node| {
+                        if let ParserVmNode::Call(id) = node {
+                            if off == *id as usize {
+                                *id = old_id as u16;
+                            }
+                        }
+                    });
+                }
             },
             EbnfExpr::Range { lhs, rhs, inclusive } => {
                 self.nodes.push(ParserVmNode::Range(lhs, rhs, inclusive));
@@ -265,11 +272,18 @@ impl ParserVm {
             EbnfExpr::AnyChar => {
                 self.nodes.push(ParserVmNode::AnyChar);
             },
+            EbnfExpr::DebugPrint => {
+                self.print();
+            }
         }
     }
 
     pub(super) fn print(&self) {
-        for (i, node) in self.nodes.iter().enumerate() {
+        self.print_in_range(0, self.len());
+    }
+
+    pub(super) fn print_in_range(&self, start: usize, end: usize) {
+        for (i, node) in self.nodes[start..end.min(self.len())].iter().enumerate() {
             if let Some((s, _)) = self.identifiers.iter().find(|(_, p)| p.0 == i) {
                 print!("{:04}: {} => {}", i, node, s);
             } else {

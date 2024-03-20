@@ -968,6 +968,7 @@ impl Lexer {
             span.end as usize,
         );
         let tokens = enbf_parser.lex();
+
         let program = EbnfParser::parse(
             tokens,
             EbnfParserMode::Parser,
