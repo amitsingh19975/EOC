@@ -4,3 +4,4 @@ pub(crate) mod span;
 pub(crate) mod diagnostic;
 pub(crate) mod trie;
 pub(crate) mod string;
+pub(crate) mod imm_ref;

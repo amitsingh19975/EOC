@@ -13,6 +13,10 @@ impl Span {
         Self { start, end }
     }
 
+    pub(crate) fn as_range(&self) -> std::ops::Range<usize> {
+        self.start as usize..self.end as usize
+    }
+
     pub(crate) fn from_usize(start: usize, end: usize) -> Self {
         Self::new(start as u32, end as u32)
     }

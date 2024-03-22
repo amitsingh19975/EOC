@@ -1,10 +1,10 @@
 #![allow(dead_code)]
 
-use std::{collections::HashMap, fmt::Display, rc::Rc};
+use std::{collections::HashMap, fmt::Display};
 
-use crate::eoc::{lexer::{ebnf::expr::EbnfExpr, token::Token}, utils::{diagnostic::Diagnostic, span::Span, string::UniqueString}};
-
-use super::{default_matcher::DefaultParserEbnfMatcher, parser_vm::ParserVm};
+use crate::eoc::{lexer::{ebnf::{expr::EbnfExpr, basic::{EbnfParserMatcher, EbnfParserMatcherInner}, vm::EbnfVm}, token::Token}, utils::{diagnostic::Diagnostic, span::Span, string::UniqueString}};
+use crate::eoc::utils::imm_ref::{Ref, ImmRef};
+use super::{default_matcher::DefaultParserEbnfMatcher, ir_parser::IRParserMatcher, parser_vm::ParserVm};
 
 pub(crate) struct ParserEbnfMatcherResult {
     token_ids: Vec<Span>,
@@ -91,69 +91,42 @@ impl ParserEbnfMatcherResult {
 
 pub(crate) trait ParserEbnfMatcher {
     fn match_tokens(&self, id: u16, tokens: &[Token], cursor: usize) -> ParserEbnfMatcherResult;
-    fn get_identifier<'a>(&self, name: &UniqueString) -> Option<usize>;
 }
 
-pub(super) enum ParserEbnfParserMatcherInner {
-    Default(DefaultParserEbnfMatcher),
-    Vm(ParserVm)
-}
+pub(super) type ParserEbnfParserMatcherInner = EbnfParserMatcherInner<DefaultParserEbnfMatcher, ParserVm, IRParserMatcher>;
 
 impl ParserEbnfMatcher for ParserEbnfParserMatcherInner {
     fn match_tokens(&self, id: u16, tokens: &[Token], cursor: usize) -> ParserEbnfMatcherResult {
         match self {
             Self::Default(default_matcher) => default_matcher.match_tokens(id, tokens, cursor),
-            Self::Vm(vm) => vm.match_tokens(id, tokens, cursor)
-        }
-    }
-
-    fn get_identifier<'a>(&self, name: &UniqueString) -> Option<usize> {
-        match self {
-            Self::Default(default_matcher) => default_matcher.get_identifier(name),
-            Self::Vm(vm) => vm.get_identifier(name)
+            Self::Vm(vm) => vm.match_tokens(id, tokens, cursor),
+            Self::IR(ir_matcher) => ir_matcher.match_tokens(id, tokens, cursor),
         }
     }
 }
 
 impl ParserEbnfParserMatcherInner {
-    pub(crate) fn new() -> Self {
-        Self::Default(DefaultParserEbnfMatcher::new())
-    }
 
     pub(crate) fn from_expr<'a>(expr: EbnfExpr, scopes: &'a ParserEbnfParserMatcher, diagnostic: &Diagnostic) -> Self {
         let mut vm = ParserVm::new();
-        vm.from(expr, scopes, diagnostic);
+        vm.from_expr(expr, scopes, diagnostic, &mut Default::default());
         Self::Vm(vm)
     }
 
     pub(crate) fn print(&self) {
         match self {
             Self::Default(default_matcher) => default_matcher.print(),
-            Self::Vm(vm) => vm.print()
+            Self::Vm(vm) => vm.print(),
+            Self::IR(ir_matcher) => ir_matcher.print(),
         }
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct ParserEbnfParserMatcher {
-    pub(super) parent_scope: Option<Rc<ParserEbnfParserMatcher>>,
-    pub(super) current_scope: Rc<ParserEbnfParserMatcherInner>
-}
+pub(crate) type ParserEbnfParserMatcher = EbnfParserMatcher<DefaultParserEbnfMatcher, ParserVm, IRParserMatcher>;
 
 impl ParserEbnfMatcher for ParserEbnfParserMatcher {
     fn match_tokens(&self, id: u16, tokens: &[Token], cursor: usize) -> ParserEbnfMatcherResult {
-        self.current_scope.match_tokens(id, tokens, cursor)
-    }
-
-    fn get_identifier<'a>(&self, name: &UniqueString) -> Option<usize> {
-        let mut scope = self;
-        while let Some(parent_scope) = scope.parent_scope.as_ref() {
-            if let Some(id) = parent_scope.current_scope.get_identifier(name) {
-                return Some(id);
-            }
-            scope = parent_scope.as_ref();
-        }
-        None
+        self.current_scope.as_ref().match_tokens(id, tokens, cursor)
     }
 }
 
@@ -161,34 +134,20 @@ impl Default for ParserEbnfParserMatcher {
     fn default() -> Self {
         Self {
             parent_scope: None,
-            current_scope: Rc::new(ParserEbnfParserMatcherInner::new())
+            current_scope: ParserEbnfParserMatcherInner::new().into()
         }
     }
 }
 
 impl ParserEbnfParserMatcher {
-    pub(crate) fn new(parent_scope: Option<Rc<ParserEbnfParserMatcher>>, expr: EbnfExpr, diagnostic: &Diagnostic) -> Self { 
-        let parent = parent_scope.unwrap_or(Rc::new(Self::default()));
+    pub(crate) fn new(parent_scope: Option<ImmRef<ParserEbnfParserMatcher>>, expr: EbnfExpr, diagnostic: &Diagnostic) -> Self { 
+        let def = Ref::new(ParserEbnfParserMatcher::default()).take_as_imm_ref();
+        let parent = parent_scope.unwrap_or(def);
         let  temp = ParserEbnfParserMatcherInner::from_expr(expr, &parent, diagnostic);
         Self {
             parent_scope: Some(parent),
-            current_scope: Rc::new(temp)
+            current_scope: temp.into()
         }
-    }
-
-    pub(super) fn get_identifier_with_scope(&self, name: &UniqueString) -> Option<(usize, Rc<ParserEbnfParserMatcherInner>)> {
-        if let Some(id) = self.current_scope.get_identifier(name) {
-            return Some((id, self.current_scope.clone()));
-        }
-
-        let mut scope = self;
-        while let Some(parent_scope) = scope.parent_scope.as_ref() {
-            if let Some(id) = parent_scope.current_scope.get_identifier(name) {
-                return Some((id, parent_scope.current_scope.clone()));
-            }
-            scope = parent_scope.as_ref();
-        }
-        None
     }
 
     fn print(&self) {
@@ -199,7 +158,7 @@ impl ParserEbnfParserMatcher {
 impl Display for ParserEbnfParserMatcher {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         {
-            self.current_scope.print();
+            self.current_scope.as_ref().print();
         }
 
         if let Some(parent_scope) = self.parent_scope.as_ref() {

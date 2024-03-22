@@ -12,15 +12,21 @@ use crate::eoc::{
 /* 
 ================= EBNF ======================
 
-| Usage         | Notation          |
-|---------------|-------------------|
-| definition    | =                 |
-| termination   | ;                 |
-| alternation   | |                 |
-| optional      | [ ]               |
-| repetition    | { }               |
-| grouping      | ( )               |
-| exception     | -                 |
+| Usage           | Notation          |
+|-----------------|-------------------|
+| definition      | =                 |
+| declaration     | ::=               |
+| termination     | ;                 |
+| alternation     | |                 |
+| optional        | [ ]               |
+| repetition      | { }               |
+| grouping        | ( )               |
+| exception       | -                 |
+| concatenation   | +                 |
+| any char        | .                 |
+| comment         | //                | 
+| multiple tokens | ,                 | ex: a, b, c => [Token(a), Token(b), Token(c)]
+| label           | $                 | ex: $label: expr
 
 =============================================
 */

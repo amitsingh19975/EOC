@@ -1,6 +1,10 @@
 pub(crate) mod lexer;
 pub(crate) mod ast;
 pub(crate) mod expr;
+pub(crate) mod basic;
 pub(crate) mod native_call;
-pub(crate) mod lexer_matcher;
-pub(super) mod lexer_vm;
+pub(crate) mod ir_matcher;
+pub(crate) mod default_matcher;
+pub(crate) mod matcher;
+pub(crate) mod vm;
+pub(crate) mod vm_state;

@@ -1,6 +1,8 @@
+#![allow(dead_code, unused_variables)]
+
 use lazy_static::lazy_static;
 
-use crate::eoc::{lexer::token::Token, utils::string::UniqueString};
+use crate::eoc::{lexer::{ebnf::{basic::{EbnfIdentifierMatcher, EbnfNodeMatcher}, vm::VmNode}, token::Token}, utils::string::UniqueString};
 
 use super::parser_matcher::{ParserEbnfMatcher, ParserEbnfMatcherResult};
 
@@ -27,6 +29,17 @@ impl NativaKind {
             identifier: UniqueString::new("identifier"),
             type_: UniqueString::new("type"),
         }
+    }
+
+    fn init(&self) {
+        let _ = self.expr;
+        let _ = self.block;
+        let _ = self.statement;
+        let _ = self.binary_op;
+        let _ = self.unary_op;
+        let _ = self.literal;
+        let _ = self.identifier;
+        let _ = self.type_;
     }
 }
 
@@ -74,14 +87,29 @@ impl ParserNativeKind {
     }
 }
 
-pub(super) struct DefaultParserEbnfMatcher(UniqueString);
+#[derive(Debug)]
+pub(crate) struct DefaultParserEbnfMatcher;
+
+impl EbnfIdentifierMatcher for DefaultParserEbnfMatcher {
+    fn get_identifier(&self, name: UniqueString) -> Option<usize> {
+        ParserNativeKind::from_str(name).map(|kind| kind.to_id() as usize)
+    }
+}
+
+impl EbnfNodeMatcher for DefaultParserEbnfMatcher {
+    fn get_node(&self, id: usize) -> Option<&VmNode> {
+        None
+    }
+}
+
+impl Default for DefaultParserEbnfMatcher {
+    fn default() -> Self {
+        NATIVE_KINDS_NAMES.init();
+        Self
+    }
+}
 
 impl DefaultParserEbnfMatcher {
-    pub(crate) fn new() -> Self {
-        // FIX: this is a way make lazy_static eagerly initialized
-        Self(NATIVE_KINDS_NAMES.expr)
-    }
-
     pub(crate) fn print(&self) {
         println!("<Native Matcher>");
     }
@@ -90,9 +118,5 @@ impl DefaultParserEbnfMatcher {
 impl ParserEbnfMatcher for DefaultParserEbnfMatcher {
     fn match_tokens(&self, id: u16, tokens: &[Token], cursor: usize) -> ParserEbnfMatcherResult {
         ParserEbnfMatcherResult::default()
-    }
-
-    fn get_identifier<'a>(&self, name: &UniqueString) -> Option<usize> {
-        ParserNativeKind::from_str(*name).map(|kind| kind.to_id() as usize)
     }
 }

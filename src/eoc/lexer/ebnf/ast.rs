@@ -39,6 +39,10 @@ impl<'a> RelativeSourceManager<'a> {
     pub(crate) fn abs_span(&self, span: Span) -> Span {
         span.relative(self.1)
     }
+
+    pub(crate) fn shift_relative_pos_by(&self, pos: u32) -> Self {
+        Self(self.0, self.1 + pos)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -246,7 +250,7 @@ impl<'a> EbnfParser<'a> {
             }
             TokenKind::Dollar => {
                 self.next();
-                if self.mode != EbnfParserMode::Parser {
+                if !self.allow_unbounded {
                     self.diagnostic
                         .builder()
                         .report(
@@ -263,7 +267,7 @@ impl<'a> EbnfParser<'a> {
                     return None;
                 }
 
-                let Some((EbnfExpr::Identifier(id, _), span)) = self.parse_primary() else {
+                let Some((EbnfExpr::Identifier(id, lhs_info), span)) = self.parse_primary() else {
                     self.diagnostic
                         .builder()
                         .report(
@@ -314,20 +318,15 @@ impl<'a> EbnfParser<'a> {
                 }
 
                 if self.peek_kind() != Some(TokenKind::Colon) {
-                    self.diagnostic
-                        .builder()
-                        .report(
-                            DiagnosticLevel::Error,
-                            "Expected ':' after label",
-                            self.source_manager.get_source_info(span),
-                            None,
-                        )
-                        .add_info(
-                            "Try add ':' after this",
-                            Some(self.source_manager.fix_span(span)),
-                        )
-                        .commit();
-                    return None;
+                    return Some(
+                        (
+                            EbnfExpr::LabelledExpr {
+                                label: id.clone(),
+                                expr: Box::new(EbnfExpr::Identifier(id, lhs_info)),
+                            },
+                            span,
+                        ),
+                    );
                 }
 
                 self.next();
