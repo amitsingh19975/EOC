@@ -799,4 +799,12 @@ impl LexerEbnfMatcher for LexerVm {
     ) -> LexerMatchResult {
         self.run(addr, s, source_manager, diagnostic, None)
     }
+    
+    fn is_default(&self) -> bool {
+        false
+    }
+
+    fn is_ir(&self) -> bool {
+        false
+    }
 }

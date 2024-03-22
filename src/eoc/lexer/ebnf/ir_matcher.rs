@@ -1,3 +1,5 @@
+use smallvec::smallvec;
+
 use crate::eoc::{
     lexer::{str_utils::ByteToCharIter, token::TokenKind},
     utils::{diagnostic::Diagnostic, span::Span, string::UniqueString},
@@ -6,7 +8,6 @@ use crate::eoc::{
 use super::{
     ast::RelativeSourceManager,
     basic::{EbnfIdentifierMatcher, EbnfNodeMatcher, LexerEbnfMatcher, LexerMatchResult},
-    default_matcher::DefaultLexerEbnfParserMatcher,
     native_call::LexerNativeCallKind,
     vm::VmNode,
     vm_state::LexerVmState,
@@ -32,24 +33,6 @@ impl IRLexerEbnfParserMatcher {
             'a'..='z' | 'A'..='Z' | '_' | '$' | '0'..='9' | '-' => true,
             _ => false,
         }
-    }
-
-    pub(crate) fn match_number<'b>(
-        &self,
-        s: &'b [u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &Diagnostic,
-    ) -> Option<(&'b [u8], TokenKind)> {
-        let def = DefaultLexerEbnfParserMatcher::new();
-        if let Some(s) = def.match_native_integer(s, source_manager, diagnostic, None) {
-            return Some((s, TokenKind::Integer));
-        }
-
-        if let Some(s) = def.match_native_floating_point(s, source_manager, diagnostic, None) {
-            return Some((s, TokenKind::FloatingPoint));
-        }
-
-        None
     }
 
     pub(crate) fn is_valid_number_start_code_point(c: char) -> bool {
@@ -244,8 +227,9 @@ impl LexerEbnfMatcher for IRLexerEbnfParserMatcher {
         diagnostic: &Diagnostic,
         state: Option<&LexerVmState>,
     ) -> Option<(&'b [u8], TokenKind)> {
+        
         kind.call(
-            &IRLexerEbnfParserMatcher::new(),
+            self,
             s,
             source_manager,
             diagnostic,
@@ -257,42 +241,6 @@ impl LexerEbnfMatcher for IRLexerEbnfParserMatcher {
         true
     }
 
-    // fn match_expr_for<'a>(
-    //     &self,
-    //     var: &str,
-    //     s: &'a [u8],
-    //     source_manager: RelativeSourceManager<'a>,
-    //     diagnostic: &Diagnostic,
-    // ) -> LexerMatchResult {
-    //     match var {
-    //         _ if var == NATIVE_CALL_KIND_ID.identifier_sym => self
-    //             .match_identifier(s, source_manager, diagnostic)
-    //             .map(|s| smallvec![(s, TokenKind::Identifier)])
-    //             .unwrap_or_default(),
-    //         _ if var == NATIVE_CALL_KIND_ID.operator_sym => self
-    //             .match_operator(s, source_manager, diagnostic)
-    //             .map(|s| smallvec![(s, TokenKind::Operator)])
-    //             .unwrap_or_default(),
-    //         _ if var == NATIVE_CALL_KIND_ID.fp_sym => self
-    //             .match_number(s, source_manager, diagnostic)
-    //             .map(|(s, _)| smallvec![(s, TokenKind::FloatingPoint)])
-    //             .unwrap_or_default(),
-    //         _ if var == NATIVE_CALL_KIND_ID.integer_sym => self
-    //             .match_number(s, source_manager, diagnostic)
-    //             .map(|(s, _)| smallvec![(s, TokenKind::Integer)])
-    //             .unwrap_or_default(),
-    //         _ if var == NATIVE_CALL_KIND_ID.string_sym => self
-    //             .match_string_literal(s, source_manager, diagnostic)
-    //             .map(|s| smallvec![(s, TokenKind::String)])
-    //             .unwrap_or_default(),
-    //         _ if var == NATIVE_CALL_KIND_ID.char_sym => self
-    //             .match_character_literal(s, source_manager, diagnostic)
-    //             .map(|s| smallvec![(s, TokenKind::Char)])
-    //             .unwrap_or_default(),
-    //         _ => smallvec![],
-    //     }
-    // }
-
     fn try_match_expr<'b>(
         &self,
         s: &'b [u8],
@@ -300,20 +248,25 @@ impl LexerEbnfMatcher for IRLexerEbnfParserMatcher {
         diagnostic: &Diagnostic,
         state: Option<&LexerVmState>,
     ) -> LexerMatchResult {
-        todo!("Implement this")
-        // for k in &[
-        //     NATIVE_CALL_KIND_ID.identifier_sym,
-        //     NATIVE_CALL_KIND_ID.operator_sym,
-        //     NATIVE_CALL_KIND_ID.fp_sym,
-        //     NATIVE_CALL_KIND_ID.integer_sym,
-        //     NATIVE_CALL_KIND_ID.string_sym,
-        //     NATIVE_CALL_KIND_ID.char_sym,
-        // ] {
-        //     if let Some(s) = self.match_expr_for(k.as_str(), s, source_manager, diagnostic) {
-        //         return Some((s, TokenKind::CustomToken(*k)));
-        //     }
-        // }
-        // None
+        if s[0] == b'"' {
+            if let Some(s) = self.match_string_literal(s, source_manager, diagnostic) {
+                return smallvec![(Span::from_usize(0, s.len()), TokenKind::String)];
+            }
+        } else if s[0] == b'\'' {
+            if let Some(s) = self.match_character_literal(s, source_manager, diagnostic) {
+                return smallvec![(Span::from_usize(0, s.len()), TokenKind::Char)];
+            }
+        }
+
+        for k in [
+            LexerNativeCallKind::Identifier,
+            LexerNativeCallKind::Number,
+        ] {
+            if let Some((s, k)) = self.match_native(k, s, source_manager, diagnostic, state) {
+                return smallvec![(Span::from_usize(0, s.len()), k)];
+            }
+        }
+        smallvec![]
     }
 
     fn match_for<'b>(
@@ -324,6 +277,10 @@ impl LexerEbnfMatcher for IRLexerEbnfParserMatcher {
         diagnostic: &Diagnostic,
     ) -> LexerMatchResult {
         todo!("Implement this")
+    }
+    
+    fn is_default(&self) -> bool {
+        false
     }
 }
 

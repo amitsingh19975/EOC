@@ -130,13 +130,8 @@ pub(crate) trait LexerEbnfMatcher {
         state: Option<&LexerVmState>
     ) -> LexerMatchResult;
 
-    fn is_ir(&self) -> bool {
-        false
-    }
-
-    fn is_default(&self) -> bool {
-        false
-    }
+    fn is_ir(&self) -> bool;
+    fn is_default(&self) -> bool;
 }
 
 pub(crate) trait EbnfIdentifierMatcher {

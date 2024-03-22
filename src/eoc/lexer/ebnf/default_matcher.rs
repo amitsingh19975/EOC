@@ -147,4 +147,8 @@ impl LexerEbnfMatcher for DefaultLexerEbnfParserMatcher {
     fn is_default(&self) -> bool {
         true
     }
+    
+    fn is_ir(&self) -> bool {
+        false
+    }
 }

@@ -182,6 +182,14 @@ impl LexerEbnfMatcher for LexerEbnfParserMatcherInner {
             EbnfParserMatcherInner::IR(r) => r.match_for(addr, s, source_manager, diagnostic),
         }
     }
+    
+    fn is_default(&self) -> bool {
+        matches!(self, EbnfParserMatcherInner::Default(_))
+    }
+    
+    fn is_ir(&self) -> bool {
+        matches!(self, EbnfParserMatcherInner::IR(_))
+    }
 }
 
 impl LexerEbnfParserMatcherInner {
@@ -282,6 +290,14 @@ impl LexerEbnfMatcher for LexerEbnfParserMatcher {
         self.current_scope
             .as_ref()
             .match_for(addr, s, source_manager, diagnostic)
+    }
+    
+    fn is_default(&self) -> bool {
+        self.current_scope.as_ref().is_default()
+    }
+
+    fn is_ir(&self) -> bool {
+        self.current_scope.as_ref().is_ir()
     }
 }
 
