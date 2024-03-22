@@ -269,12 +269,12 @@ impl LexerEbnfMatcher for IRLexerEbnfParserMatcher {
 
     fn match_for<'b>(
         &self,
-        addr: usize,
-        s: &'b [u8],
-        source_manager: RelativeSourceManager<'b>,
-        diagnostic: &Diagnostic,
+        _addr: usize,
+        _s: &'b [u8],
+        _source_manager: RelativeSourceManager<'b>,
+        _diagnostic: &Diagnostic,
     ) -> LexerMatchResult {
-        todo!("Implement this")
+        unreachable!("IRLexerEbnfParserMatcher::match_for")
     }
     
     fn is_default(&self) -> bool {
@@ -289,7 +289,7 @@ impl EbnfIdentifierMatcher for IRLexerEbnfParserMatcher {
 }
 
 impl EbnfNodeMatcher for IRLexerEbnfParserMatcher {
-    fn get_node(&self, id: usize) -> Option<&VmNode> {
-        todo!()
+    fn get_node(&self, _id: usize) -> Option<&VmNode> {
+        None
     }
 }
