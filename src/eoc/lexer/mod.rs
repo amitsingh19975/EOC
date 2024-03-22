@@ -247,6 +247,33 @@ impl Lexer {
         false
     }
 
+    fn lex_identifier_helper(
+        &mut self,
+        span: Span,
+        kind: TokenKind,
+        tokens: &mut Vec<Token>,
+        should_parse_nested_operator: bool
+    ) {
+
+        if !should_parse_nested_operator {
+            return
+        }
+
+        if kind == TokenKind::KwOperator {
+            let new_tokens = self.lex_custom_operator(span);
+            tokens.extend(new_tokens);
+        } else if kind == TokenKind::KwKeyword {
+            let new_tokens = self.lex_custom_keyword(span);
+            tokens.extend(new_tokens);
+        } else if kind == TokenKind::Fn {
+            self.mode = if self.is_ir_mode(tokens) {
+                LexerMode::IR
+            } else {
+                LexerMode::Normal
+            };
+        }
+    }
+
     fn lex_identifier(
         &mut self,
         matcher: &LexerEbnfParserMatcher,
@@ -263,24 +290,8 @@ impl Lexer {
             let span = Span::from_usize(self.cursor, end);
             tokens.push(Token::new(TokenKind::Identifier, span));
             self.cursor = end;
-
             let kind: TokenKind = slice.into();
-
-            if should_parse_nested_operator {
-                if kind == TokenKind::KwOperator {
-                    let new_tokens = self.lex_custom_operator(span);
-                    tokens.extend(new_tokens);
-                } else if kind == TokenKind::KwKeyword {
-                    let new_tokens = self.lex_custom_keyword(span);
-                    tokens.extend(new_tokens);
-                } else if kind == TokenKind::Fn {
-                    self.mode = if self.is_ir_mode(tokens) {
-                        LexerMode::IR
-                    } else {
-                        LexerMode::Normal
-                    };
-                }
-            }
+            self.lex_identifier_helper(span, kind, tokens, should_parse_nested_operator);
         }
     }
 
@@ -1001,7 +1012,6 @@ impl Lexer {
             b"```",
         );
 
-        
         if is_code_block && is_start_code_block {
             return false;
         }
@@ -1012,8 +1022,6 @@ impl Lexer {
             self.next_char();
             return true;
         }
-
-        self.cursor += 3;
 
         if !self.is_start_of_identifier(matcher) {
             let dummy = (TokenKind::Unknown, Span::from_usize(0, 0));
@@ -1049,6 +1057,7 @@ impl Lexer {
             return true;
         }
 
+        self.cursor += 3;
         self.lex_identifier(matcher, tokens, false);
         let identifier = tokens.pop().unwrap();
         let id_span = identifier.span.clone();
@@ -1286,8 +1295,14 @@ impl Lexer {
                     &self.diagnostics,
                     None
                 );
+                println!("temp_matched: {:?}", temp_matched);
                 if !temp_matched.is_empty() {
                     for (span, kind) in temp_matched {
+                        if kind == TokenKind::Identifier {
+                            let slice = &self.source_manager[span];
+                            let kind: TokenKind = slice.into();
+                            self.lex_identifier_helper(span, kind, &mut tokens, true);
+                        }
                         tokens.push(Token::new(kind, span));
                         self.cursor += span.len();
                         last_cursor = Some(self.cursor);
@@ -1539,10 +1554,12 @@ impl Lexer {
             match ch {
                 _ if IRLexerEbnfParserMatcher::is_valid_number_start_code_point(ch) => {
                     let start = self.cursor;
-                    if let Some((s, t)) = matcher.as_ir().match_number(
+                    if let Some((s, t)) = matcher.as_ir().match_native(
+                        ebnf::native_call::LexerNativeCallKind::Number,
                         source,
                         relative_manager,
-                        &mut self.diagnostics,
+                        &self.diagnostics,
+                        None
                     ) {
                         let end = start + s.len();
                         let span = Span::from_usize(start, end);
@@ -1567,7 +1584,7 @@ impl Lexer {
                     }
                 }
                 _ if IRLexerEbnfParserMatcher::is_valid_identifier_start_code_point(ch) => {
-                    let id = matcher.match_native(
+                    let id = matcher.as_ir().match_native(
                         ebnf::native_call::LexerNativeCallKind::Identifier,
                         source,
                         RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
@@ -1854,6 +1871,11 @@ impl Lexer {
                     if !self.lex_back_tick(&mut matcher, &mut tokens, false) {
                         break;
                     }
+                }
+                ';' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    tokens.push(Token::new(TokenKind::Semicolon, span));
+                    self.next_char();
                 }
                 _ => {
                     self.check_balanced_paren(&[]);
