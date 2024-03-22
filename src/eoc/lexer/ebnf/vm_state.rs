@@ -1,3 +1,4 @@
+#[cfg(debug_assertions)]
 use std::sync::{Arc, RwLock};
 
 use smallvec::SmallVec;
@@ -91,6 +92,9 @@ impl<T> VmState<T> {
     pub(crate) fn merge_call_stack(&mut self, other: &Self) {
         self.call_stack.write().unwrap().extend(other.call_stack.read().unwrap().iter().cloned());
     }
+
+    #[cfg(not(debug_assertions))]
+    pub(crate) fn merge_call_stack(&mut self, _other: &Self) {}
 }
 
 pub(crate) type LexerVmState = VmState<(Span, TokenKind)>;
