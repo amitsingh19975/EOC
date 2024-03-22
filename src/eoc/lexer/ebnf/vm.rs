@@ -21,7 +21,7 @@ use super::{
     default_matcher::DefaultLexerEbnfParserMatcher,
     expr::{EbnfExpr, TerminalValue},
     ir_matcher::IRLexerEbnfParserMatcher,
-    native_call::LexerNativeCallKind, vm_state::LexerVmState,
+    native_call::LexerNativeCallKind, vm_state::{LexerVmState, VmState},
 };
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -290,8 +290,6 @@ pub(crate) trait EbnfVm<D, V, R> {
     fn print_in_range(&self, _start: usize, _end: usize);
 }
 
-type LexerVmNode = VmNode;
-
 impl LexerVmNode {
     fn exec(
         vm: &LexerVm,
@@ -345,9 +343,7 @@ impl LexerVmNode {
                 let start = state.cursor;
                 state.cursor += res.len();
 
-                state
-                    .result
-                    .push((Span::from_usize(start, state.cursor), tk));
+                state.result = Some((Span::from_usize(start, state.cursor), tk));
             }
             VmNode::Terminal(t) => {
                 let slice = s[state.cursor..].as_ref();
@@ -359,9 +355,7 @@ impl LexerVmNode {
                 if is_matched {
                     let start = state.cursor;
                     state.cursor += t.len_utf8();
-                    state
-                        .result
-                        .push((Span::from_usize(start, state.cursor), TokenKind::Unknown))
+                    state.result = Some((Span::from_usize(start, state.cursor), TokenKind::Unknown));
                 } else {
                     return (false, 1);
                 }
@@ -376,9 +370,7 @@ impl LexerVmNode {
 
                     let start = state.cursor;
                     state.cursor += 1;
-                    state
-                        .result
-                        .push((Span::from_usize(start, state.cursor), TokenKind::Unknown));
+                    state.result = Some((Span::from_usize(start, state.cursor), TokenKind::Unknown));
                     return (true, 1);
                 }
 
@@ -389,10 +381,7 @@ impl LexerVmNode {
                             if slice.starts_with(s.as_bytes()) {
                                 let start = state.cursor;
                                 state.cursor += s.len();
-                                state.result.push((
-                                    Span::from_usize(start, state.cursor),
-                                    TokenKind::Unknown,
-                                ));
+                                state.result = Some((Span::from_usize(start, state.cursor), TokenKind::Unknown));
                                 return (true, 1);
                             }
                         }
@@ -413,9 +402,7 @@ impl LexerVmNode {
                     if (l..=r).contains(&ch) {
                         let start = state.cursor;
                         state.cursor += ch.len_utf8();
-                        state
-                            .result
-                            .push((Span::from_usize(start, state.cursor), TokenKind::Unknown));
+                        state.result = Some((Span::from_usize(start, state.cursor), TokenKind::Unknown));
                     } else {
                         return (false, 1);
                     }
@@ -423,9 +410,7 @@ impl LexerVmNode {
                     if (l..r).contains(&ch) {
                         let start = state.cursor;
                         state.cursor += ch.len_utf8();
-                        state
-                            .result
-                            .push((Span::from_usize(start, state.cursor), TokenKind::Unknown));
+                        state.result = Some((Span::from_usize(start, state.cursor), TokenKind::Unknown));
                     } else {
                         return (false, 1);
                     }
@@ -439,9 +424,7 @@ impl LexerVmNode {
 
                 let start = state.cursor;
                 state.cursor += ch.len_utf8();
-                state
-                    .result
-                    .push((Span::from_usize(start, state.cursor), TokenKind::Unknown));
+                state.result = Some((Span::from_usize(start, state.cursor), TokenKind::Unknown));
             }
             VmNode::Alternative(count, off) => {
                 let off = *off as usize;
@@ -460,8 +443,6 @@ impl LexerVmNode {
                 let off = *off as usize;
                 let old_res = state.result.clone();
                 let start = state.cursor;
-                state.result.clear();
-                state.result.reserve(*count as usize);
                 for _ in 0..*count {
                     let res = Self::exec(vm, state, s, source_manager, diagnostic);
                     if !res {
@@ -471,8 +452,7 @@ impl LexerVmNode {
                 }
 
                 let end = state.cursor;
-                state.result = old_res;
-                state.result.push((Span::from_usize(start, end), TokenKind::Unknown));
+                state.result = Some((Span::from_usize(start, end), TokenKind::Unknown));
 
                 return (true, off);
             }
@@ -513,6 +493,8 @@ impl LexerVmNode {
                 let res = start_cursor < end_cursor;
                 if !res {
                     state.result = old_res;
+                } else {
+                    state.result = Some((Span::from_usize(start_cursor, end_cursor), TokenKind::Unknown));
                 }
                 return (res, off);
             }
@@ -530,8 +512,6 @@ impl LexerVmNode {
 
                 let current_pc = state.pc;
                 let old_cursor = state.cursor;
-                let old_res = state.result.clone();
-                state.result.clear();
 
                 loop {
                     if s.len() <= state.cursor {
@@ -553,9 +533,8 @@ impl LexerVmNode {
                 }
 
                 let res = state.cursor != old_cursor;
-                state.result = old_res;
                 if res {
-                    state.result.push((
+                    state.result = Some((
                         Span::from_usize(old_cursor, state.cursor),
                         TokenKind::Unknown,
                     ));
@@ -568,7 +547,7 @@ impl LexerVmNode {
                 state.pc = *addr as usize;
                 let is_valid = Self::exec(vm, state, s, source_manager, diagnostic);
                 if is_valid {
-                    let (_, t) = state.result.last_mut().unwrap();
+                    let (_, t) = state.result.as_mut().unwrap();
                     *t = TokenKind::CustomToken(*l);
                 }
                 state.pc = pc + off;
@@ -580,6 +559,7 @@ impl LexerVmNode {
     }
 }
 
+type LexerVmNode = VmNode;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct LexerVm {
@@ -615,15 +595,15 @@ impl LexerVm {
         diagnostic: &Diagnostic,
         state: Option<&LexerVmState>
     ) -> LexerMatchResult {
-        let mut temp_state = LexerVmState::new(id);
+        let mut temp_state = VmState::new(id);
         state.map(|s| temp_state.merge_call_stack(s));
 
         let is_valid = LexerVmNode::exec(self, &mut temp_state, s, source_manager, diagnostic);
 
         if !is_valid {
-            LexerMatchResult::new()
+            None
         } else {
-            temp_state.result.clone().into_iter().map(|(r, k)| (r, k)).collect()
+            temp_state.result
         }
     }
 
@@ -748,7 +728,6 @@ impl LexerEbnfMatcher for LexerVm {
     ) -> Option<(&'b [u8], TokenKind)> {
         if let Some((id, _)) = self.identifiers.get(&kind.as_unique_str()).copied() {
             self.run(id, s, source_manager, diagnostic, state)
-                .pop()
                 .map(|(r, k)| (s[r.as_range()].as_ref(), k))
         } else {
             kind.call(self, s, source_manager, diagnostic, state)
@@ -781,9 +760,7 @@ impl LexerEbnfMatcher for LexerVm {
         let mut res = Vec::new();
         for _ in 0..(self.def_identifiers.len()) {
             if let Ok(temp) = rx.recv() {
-                if !temp.1.is_empty() {
-                    res.push(temp)
-                }
+                res.push(temp)
             }
         }
         res.sort_unstable_by_key(|(k, _)| *k);

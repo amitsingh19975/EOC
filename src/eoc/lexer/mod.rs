@@ -1023,11 +1023,12 @@ impl Lexer {
             return true;
         }
 
+        self.cursor += 3;
+        
         if !self.is_start_of_identifier(matcher) {
             let dummy = (TokenKind::Unknown, Span::from_usize(0, 0));
             let last = self.paren_balance.last().unwrap_or(&dummy).clone();
             let span = Span::from_usize(self.cursor, self.cursor + 3);
-            self.cursor += 3;
 
             tokens.push(Token::new(TokenKind::TripleBackTick, span));
 
@@ -1057,7 +1058,6 @@ impl Lexer {
             return true;
         }
 
-        self.cursor += 3;
         self.lex_identifier(matcher, tokens, false);
         let identifier = tokens.pop().unwrap();
         let id_span = identifier.span.clone();
@@ -1295,19 +1295,17 @@ impl Lexer {
                     &self.diagnostics,
                     None
                 );
-                println!("temp_matched: {:?}", temp_matched);
-                if !temp_matched.is_empty() {
-                    for (span, kind) in temp_matched {
-                        if kind == TokenKind::Identifier {
-                            let slice = &self.source_manager[span];
-                            let kind: TokenKind = slice.into();
-                            self.lex_identifier_helper(span, kind, &mut tokens, true);
-                        }
-                        tokens.push(Token::new(kind, span));
-                        self.cursor += span.len();
-                        last_cursor = Some(self.cursor);
-                        is_shebang_valid = false;
+
+                if let Some((span, kind)) = temp_matched {
+                    if kind == TokenKind::Identifier {
+                        let slice = &self.source_manager[span];
+                        let kind: TokenKind = slice.into();
+                        self.lex_identifier_helper(span, kind, &mut tokens, true);
                     }
+                    tokens.push(Token::new(kind, span));
+                    self.cursor += span.len();
+                    last_cursor = Some(self.cursor);
+                    is_shebang_valid = false;
                     continue;
                 }
             }

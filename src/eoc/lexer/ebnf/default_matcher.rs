@@ -1,5 +1,3 @@
-use smallvec::smallvec;
-
 use crate::eoc::{
     ast::identifier::Identifier,
     lexer::{
@@ -124,10 +122,10 @@ impl LexerEbnfMatcher for DefaultLexerEbnfParserMatcher {
         ] {
             let temp = self.match_native(k, s, source_manager, diagnostic, state);
             if let Some((s, k)) = temp {
-                return smallvec![(source_manager.abs_span(Span::from_usize(0, s.len())), k)];
+                return Some((source_manager.abs_span(Span::from_usize(0, s.len())), k));
             }
         }
-        smallvec![]
+        None
     }
 
     fn match_for<'b>(
@@ -140,8 +138,7 @@ impl LexerEbnfMatcher for DefaultLexerEbnfParserMatcher {
         let key = NATIVE_CALL_KIND_ID.id_to_string(addr).unwrap();
         let key = NATIVE_CALL_KIND_ID.to_native_call_kind(key).unwrap();
         self.match_native(key, s, source_manager, diagnostic, None)
-            .map(|(s, k)| smallvec![(source_manager.abs_span(Span::from_usize(0, s.len())), k)])
-            .unwrap_or_default()
+            .map(|(s, k)| (source_manager.abs_span(Span::from_usize(0, s.len())), k))
     }
 
     fn is_default(&self) -> bool {

@@ -22,9 +22,7 @@ use super::{
     vm::{LexerVm, VmNode}, vm_state::LexerVmState,
 };
 
-use smallvec::SmallVec;
-
-pub(crate) type LexerMatchResult = SmallVec<[(Span, TokenKind); 1]>;
+pub(crate) type LexerMatchResult = Option<(Span, TokenKind)>;
 
 pub(crate) trait LexerEbnfMatcher {
     fn is_digit<'b>(

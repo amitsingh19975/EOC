@@ -1,5 +1,3 @@
-use smallvec::smallvec;
-
 use crate::eoc::{
     lexer::{str_utils::ByteToCharIter, token::TokenKind},
     utils::{diagnostic::Diagnostic, span::Span, string::UniqueString},
@@ -250,11 +248,11 @@ impl LexerEbnfMatcher for IRLexerEbnfParserMatcher {
     ) -> LexerMatchResult {
         if s[0] == b'"' {
             if let Some(s) = self.match_string_literal(s, source_manager, diagnostic) {
-                return smallvec![(Span::from_usize(0, s.len()), TokenKind::String)];
+                return Some((Span::from_usize(0, s.len()), TokenKind::String));
             }
         } else if s[0] == b'\'' {
             if let Some(s) = self.match_character_literal(s, source_manager, diagnostic) {
-                return smallvec![(Span::from_usize(0, s.len()), TokenKind::Char)];
+                return Some((Span::from_usize(0, s.len()), TokenKind::Char));
             }
         }
 
@@ -263,10 +261,10 @@ impl LexerEbnfMatcher for IRLexerEbnfParserMatcher {
             LexerNativeCallKind::Number,
         ] {
             if let Some((s, k)) = self.match_native(k, s, source_manager, diagnostic, state) {
-                return smallvec![(Span::from_usize(0, s.len()), k)];
+                return Some((Span::from_usize(0, s.len()), k));
             }
         }
-        smallvec![]
+        None
     }
 
     fn match_for<'b>(

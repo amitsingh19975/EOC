@@ -1,8 +1,6 @@
 #[cfg(debug_assertions)]
 use std::sync::{Arc, RwLock};
 
-use smallvec::SmallVec;
-
 use crate::eoc::{lexer::token::TokenKind, utils::span::Span};
 use super::vm::LexerVm;
 
@@ -12,14 +10,14 @@ pub(crate) struct VmState<T> {
     pub(crate) call_stack: Arc<RwLock<Vec<usize>>>,
     pub(crate) pc: usize,
     pub(crate) cursor: usize,
-    pub(crate) result: SmallVec<[T; 1]>,
+    pub(crate) result: Option<T>,
 }
 
 #[cfg(not(debug_assertions))]
 pub(crate) struct VmState<T> {
     pub(crate) pc: usize,
     pub(crate) cursor: usize,
-    pub(crate) result: SmallVec<[T; 1]>,
+    pub(crate) result: Option<T>,
 }
 
 impl<T> Default for VmState<T> {
@@ -35,7 +33,7 @@ impl<T> VmState<T> {
             call_stack: Default::default(),
             pc,
             cursor: 0,
-            result: SmallVec::new(),
+            result: None,
         }
     }
 
@@ -44,7 +42,7 @@ impl<T> VmState<T> {
         Self {
             pc,
             cursor: 0,
-            result: SmallVec::new(),
+            result: None,
         }
     }
 
