@@ -1023,14 +1023,14 @@ impl Lexer {
             return true;
         }
 
+        let quote_span = Span::from_usize(self.cursor, self.cursor + 3);
         self.cursor += 3;
         
         if !self.is_start_of_identifier(matcher) {
             let dummy = (TokenKind::Unknown, Span::from_usize(0, 0));
             let last = self.paren_balance.last().unwrap_or(&dummy).clone();
-            let span = Span::from_usize(self.cursor, self.cursor + 3);
 
-            tokens.push(Token::new(TokenKind::TripleBackTick, span));
+            tokens.push(Token::new(TokenKind::TripleBackTick, quote_span));
 
             let (token, _) = last;
 
@@ -1051,7 +1051,7 @@ impl Lexer {
                 if to_be_remove_index != -1 {
                     self.paren_balance.remove(to_be_remove_index as usize);
                 } else {
-                    self.paren_balance.push((TokenKind::TripleBackTick, span));
+                    self.paren_balance.push((TokenKind::TripleBackTick, quote_span));
                 }
             }
 
