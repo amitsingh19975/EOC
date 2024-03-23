@@ -190,6 +190,14 @@ impl LexerEbnfMatcher for LexerEbnfParserMatcherInner {
     fn is_ir(&self) -> bool {
         matches!(self, EbnfParserMatcherInner::IR(_))
     }
+
+    fn is_scoped(&self) -> bool {
+        match self {
+            EbnfParserMatcherInner::Default(d) => d.is_scoped(),
+            EbnfParserMatcherInner::Vm(v) => v.is_scoped(),
+            EbnfParserMatcherInner::IR(r) => r.is_scoped(),
+        }
+    }
 }
 
 impl LexerEbnfParserMatcherInner {
@@ -202,7 +210,7 @@ impl LexerEbnfParserMatcherInner {
             return Self::new();
         }
 
-        let mut vm = LexerVm::new(diagnostic.get_filepath());
+        let mut vm = LexerVm::new();
         vm.from_expr(expr, scopes, diagnostic, &mut Default::default());
         EbnfParserMatcherInner::Vm(vm)
     }
@@ -298,6 +306,10 @@ impl LexerEbnfMatcher for LexerEbnfParserMatcher {
 
     fn is_ir(&self) -> bool {
         self.current_scope.as_ref().is_ir()
+    }
+
+    fn is_scoped(&self) -> bool {
+        self.current_scope.as_ref().is_scoped()
     }
 }
 

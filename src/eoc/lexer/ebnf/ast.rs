@@ -642,6 +642,9 @@ impl<'a> EbnfParser<'a> {
         while self.parse_error_expr(errors) {}
 
         let mut lhs = self.parse_expr_helper(labels, errors, import_list);
+        if lhs.is_none() {
+            return None;
+        }
 
         loop {
             let token = self.peek();

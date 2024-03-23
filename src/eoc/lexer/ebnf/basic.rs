@@ -130,6 +130,8 @@ pub(crate) trait LexerEbnfMatcher {
 
     fn is_ir(&self) -> bool;
     fn is_default(&self) -> bool;
+
+    fn is_scoped(&self) -> bool;
 }
 
 pub(crate) trait EbnfIdentifierMatcher {

@@ -148,4 +148,8 @@ impl LexerEbnfMatcher for DefaultLexerEbnfParserMatcher {
     fn is_ir(&self) -> bool {
         false
     }
+
+    fn is_scoped(&self) -> bool {
+        false
+    }
 }

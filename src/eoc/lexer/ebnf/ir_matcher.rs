@@ -280,6 +280,10 @@ impl LexerEbnfMatcher for IRLexerEbnfParserMatcher {
     fn is_default(&self) -> bool {
         false
     }
+
+    fn is_scoped(&self) -> bool {
+        false
+    }
 }
 
 impl EbnfIdentifierMatcher for IRLexerEbnfParserMatcher {

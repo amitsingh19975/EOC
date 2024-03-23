@@ -1,11 +1,14 @@
 ```lexer(html)
-// import digit;
+import whitespace;
 
 #0 = "Invalid identifier"
-digit = digit | 'a';
-digit = digit | 'b';
+#invalid_text = "Invalid text found"
+
+identifier = { 'a'..='z' | 'A'..='Z' | '_' | '-' | '0'..='9' };
+
+text ::= { . - ('>' | '<') } #invalid_text;
 doc_tag ::= '<', '!', 'DOCTYPE', {whitespace}?, 'html', '>';
-start_tag ::= '<', identifier#0, '>'#0;
+start_tag ::= '<', identifier#0, '>';
 end_tag ::= '<', '/', identifier, '>';
 
 debug_print
@@ -14,12 +17,10 @@ debug_print
 ```html
 
 <!DOCTYPE html>
-<html>
+<1html>
     <body>
-
         <h1>My First Heading</h1>
         <p>My first paragraph.</p>
-
     </body>
 </html>
 

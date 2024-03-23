@@ -807,29 +807,67 @@ impl Lexer {
         let mut code_end_span = code_span;
         let mut matcher = self.block_lexer_matcher.remove(&name).unwrap();
         let temp_tokens = self.lex_helper(&mut matcher, vec![], true, true);
+
         if !ParenMatching::is_triple_back_tick_block(
             &self.source_manager.get_source(),
             self.cursor,
             b"```",
         ) {
-            self.diagnostics
-                .builder()
-                .report(
-                    DiagnosticLevel::Error,
-                    "Unterminated lexer block",
-                    self.source_manager.get_source_info(code_span),
-                    None,
-                )
-                .add_error(
-                    "Try add '```' to close the code block",
-                    Some(self.source_manager.fix_span(code_span)),
-                )
-                .commit();
+            self.save_cursor();
+            let mut found = false;
+            while let Some(ch) = self.peek_char() {
+                if ch == '`' {
+                    if ParenMatching::is_triple_back_tick_block(
+                        &self.source_manager.get_source(),
+                        self.cursor,
+                        b"```",
+                    ) {
+                        found = true;
+                        break;
+                    }
+                } else if ch == '\\' {
+                    self.next_char();
+                }
+                self.next_char();
+            }
+
+            if found {
+                code_end_span.start = self.cursor as u32;
+                code_end_span.end = self.cursor as u32 + 3;
+                self.cursor += 3;
+
+                self.diagnostics
+                    .builder()
+                    .report(
+                        DiagnosticLevel::Error,
+                        "Unable to lex the code block",
+                        self.source_manager.get_source_info(code_span),
+                        None,
+                    )
+                    .commit();
+            } else {
+                self.rewind_cursor();
+                self.diagnostics
+                    .builder()
+                    .report(
+                        DiagnosticLevel::Error,
+                        "Unterminated lexer block",
+                        self.source_manager.get_source_info(code_span),
+                        None,
+                    )
+                    .add_error(
+                        "Try add '```' to close the code block",
+                        Some(self.source_manager.fix_span(code_span)),
+                    )
+                    .commit();
+            }
+
         } else {
             code_end_span.start = self.cursor as u32;
             self.cursor += 3;
             code_end_span.end = self.cursor as u32;
         }
+
         tokens.push(Token::new(
             TokenKind::CustomCodeBlockStart(name),
             Span::from_usize(code_start - name.as_ref().as_bytes().len() - 3, code_start),
@@ -1309,9 +1347,25 @@ impl Lexer {
                     last_cursor = Some(self.cursor);
                     is_shebang_valid = false;
                     continue;
+                } 
+                
+                if matcher.is_scoped() {
+                    self.diagnostics
+                        .builder()
+                        .report(
+                            DiagnosticLevel::Error,
+                            "Invalid token",
+                            self.source_manager.get_source_info(Span::from_usize(self.cursor, self.cursor + 1)),
+                            None
+                        )
+                        .add_error(
+                            "Invalid token",
+                            Some(self.source_manager.fix_span(Span::from_usize(self.cursor, self.cursor + 1)))
+                        )
+                        .commit();
+                    break;
                 }
             }
-
 
             let mut should_run_custom_match = true;
 

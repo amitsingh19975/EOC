@@ -567,7 +567,7 @@ impl Diagnostic {
         inner.has_error()
     }
 
-    pub(crate) fn append(&self, other: &Diagnostic) {
+    pub(crate) fn append(&self, other: Diagnostic) {
         let mut inner = self.inner.write().unwrap();
         let mut other_inner = other.inner.write().unwrap();
         match &mut *other_inner {
@@ -575,7 +575,6 @@ impl Diagnostic {
                 for message in b.iter() {
                     inner.add_message(message.clone());
                 }
-                b.messages.clear();
             },
             DiagnosticInner::Stream(s) => {
                 for message in s.iter() {

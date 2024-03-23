@@ -115,3 +115,67 @@ caret_id ::= '^', suffix_id;
 ```
 
 /////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////// HTML Example ////////////////////////////////////
+
+```lexer(html)
+import whitespace;
+
+#0 = "Invalid identifier"
+#invalid_text = "Invalid text found"
+
+identifier = { 'a'..='z' | 'A'..='Z' | '_' | '-' | '0'..='9' };
+
+text ::= { . - ('>' | '<') } #invalid_text;
+doc_tag ::= '<', '!', 'DOCTYPE', {whitespace}?, 'html', '>';
+start_tag ::= '<', identifier#0, '>';
+end_tag ::= '<', '/', identifier, '>';
+
+```
+
+```html
+
+<!DOCTYPE html>
+<1html>
+    <body>
+        <h1>My First Heading</h1>
+        <p>My first paragraph.</p>
+    </body>
+</html>
+
+```
+
+/* Output:
+
+Token(Newline, '\n\n', Span { start: 362, end: 364 }, len=2)
+Token(CustomCodeBlockStart('html'), '```html', Span { start: 364, end: 371 }, len=7)
+Token(Newline, '\n\n', Span { start: 371, end: 373 }, len=2)
+Token(CustomToken('doc_tag'), '<!DOCTYPE html>', Span { start: 373, end: 388 }, len=15)
+Token(Newline, '\n', Span { start: 388, end: 389 }, len=1)
+Token(CustomToken('start_tag'), '<1html>', Span { start: 389, end: 396 }, len=7)
+Token(Newline, '\n', Span { start: 396, end: 397 }, len=1)
+Token(Space, '    ', Span { start: 397, end: 401 }, len=4)
+Token(CustomToken('start_tag'), '<body>', Span { start: 401, end: 407 }, len=6)
+Token(Newline, '\n', Span { start: 407, end: 408 }, len=1)
+Token(Space, '        ', Span { start: 408, end: 416 }, len=8)
+Token(CustomToken('start_tag'), '<h1>', Span { start: 416, end: 420 }, len=4)
+Token(CustomToken('text'), 'My First Heading', Span { start: 420, end: 436 }, len=16)
+Token(CustomToken('end_tag'), '</h1>', Span { start: 436, end: 441 }, len=5)
+Token(Newline, '\n', Span { start: 441, end: 442 }, len=1)
+Token(Space, '        ', Span { start: 442, end: 450 }, len=8)
+Token(CustomToken('start_tag'), '<p>', Span { start: 450, end: 453 }, len=3)
+Token(CustomToken('text'), 'My first paragraph.', Span { start: 453, end: 472 }, len=19)
+Token(CustomToken('end_tag'), '</p>', Span { start: 472, end: 476 }, len=4)
+Token(Newline, '\n', Span { start: 476, end: 477 }, len=1)
+Token(Space, '    ', Span { start: 477, end: 481 }, len=4)
+Token(CustomToken('end_tag'), '</body>', Span { start: 481, end: 488 }, len=7)
+Token(Newline, '\n', Span { start: 488, end: 489 }, len=1)
+Token(CustomToken('end_tag'), '</html>', Span { start: 489, end: 496 }, len=7)
+Token(Newline, '\n\n', Span { start: 496, end: 498 }, len=2)
+Token(CustomCodeBlockEnd('html'), '```', Span { start: 498, end: 501 }, len=3)
+Token(Newline, '\n', Span { start: 501, end: 502 }, len=1)
+Token(EndOfFile, '', Span { start: 502, end: 502 }, len=0)
+
+*/
+
+///////////////////////////////////////////////////////////////////////////////

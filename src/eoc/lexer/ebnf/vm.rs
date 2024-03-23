@@ -1,5 +1,7 @@
 use std::{
-    collections::{HashMap, HashSet}, fmt::Debug, path::PathBuf, sync::mpsc::channel
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+    sync::mpsc::channel,
 };
 
 use smallvec::SmallVec;
@@ -49,11 +51,7 @@ pub(crate) enum VmNode {
     Label(UniqueString, u16, u16), // Label a
     DebugPrint,                    // Debug print the VM code
 
-    ErrorScope{
-        error_id: u16,
-        off: u16,
-        span: Span,
-    }, 
+    ErrorScope { error_id: u16, off: u16, span: Span },
 }
 
 impl VmNode {
@@ -91,6 +89,8 @@ pub(crate) trait EbnfVm<D, V, R> {
 
     fn add_error(&mut self, message: String) -> u16;
 
+    fn set_is_scoped(&mut self, _is_scoped: bool) {}
+
     fn from_expr<'a>(
         &mut self,
         mut expr: EbnfExpr,
@@ -125,6 +125,8 @@ pub(crate) trait EbnfVm<D, V, R> {
             }
             _ => {}
         }
+
+        self.set_is_scoped(!import_list.contains("@all"));
 
         self.from_expr_helper(expr, scopes, diagnostic, is_defined, &import_list, &errors);
     }
@@ -426,7 +428,7 @@ impl LexerVmNode {
         s: &[u8],
         source_manager: RelativeSourceManager,
         global_diagnostic: &Diagnostic,
-        local_diagnostic: &Diagnostic,
+        local_diagnostic: &mut Option<Diagnostic>,
     ) -> bool {
         let pc = state.pc;
         if pc >= vm.nodes.len() {
@@ -435,7 +437,14 @@ impl LexerVmNode {
 
         state.push_call_stack(pc);
 
-        let (is_valid, off) = Self::exec_helper(vm, state, s, source_manager, global_diagnostic, local_diagnostic);
+        let (is_valid, off) = Self::exec_helper(
+            vm,
+            state,
+            s,
+            source_manager,
+            global_diagnostic,
+            local_diagnostic,
+        );
         state.pc = (pc + off).min(vm.nodes.len() - 1);
 
         state.pop_call_stack();
@@ -448,15 +457,24 @@ impl LexerVmNode {
         s: &[u8],
         source_manager: RelativeSourceManager,
         global_diagnostic: &Diagnostic,
-        local_diagnostic: &Diagnostic,
+        local_diagnostic: &mut Option<Diagnostic>,
     ) -> (bool, usize) {
         let node = &vm.nodes[state.pc];
         state.next_pc();
 
+        // state.print_call_stack(vm);
+
         match node {
             VmNode::Call(addr) => {
                 state.pc = *addr as usize;
-                if !Self::exec(vm, state, s, source_manager, global_diagnostic, local_diagnostic) {
+                if !Self::exec(
+                    vm,
+                    state,
+                    s,
+                    source_manager,
+                    global_diagnostic,
+                    local_diagnostic,
+                ) {
                     return (false, 1);
                 }
             }
@@ -567,7 +585,14 @@ impl LexerVmNode {
                 let off = *off as usize;
                 let mut found = false;
                 for _ in 0..*count {
-                    let is_valid = Self::exec(vm, state, s, source_manager, global_diagnostic, local_diagnostic);
+                    let is_valid = Self::exec(
+                        vm,
+                        state,
+                        s,
+                        source_manager,
+                        global_diagnostic,
+                        local_diagnostic,
+                    );
                     if is_valid {
                         found = true;
                         break;
@@ -581,7 +606,14 @@ impl LexerVmNode {
                 let old_res = state.result.clone();
                 let start = state.cursor;
                 for _ in 0..*count {
-                    let res = Self::exec(vm, state, s, source_manager, global_diagnostic, local_diagnostic);
+                    let res = Self::exec(
+                        vm,
+                        state,
+                        s,
+                        source_manager,
+                        global_diagnostic,
+                        local_diagnostic,
+                    );
                     if !res {
                         state.result = old_res;
                         return (false, off);
@@ -598,7 +630,14 @@ impl LexerVmNode {
                 let start_cursor = state.cursor;
                 let old_res = state.result.clone();
 
-                let res = Self::exec(vm, state, s, source_manager, global_diagnostic, local_diagnostic);
+                let res = Self::exec(
+                    vm,
+                    state,
+                    s,
+                    source_manager,
+                    global_diagnostic,
+                    local_diagnostic,
+                );
                 let mut end_cursor = state.cursor;
 
                 if !res || start_cursor == end_cursor {
@@ -612,7 +651,14 @@ impl LexerVmNode {
                         state.pc = pc;
                         state.cursor = i;
                         let temp_start = state.cursor;
-                        let res = Self::exec(vm, state, s, source_manager, global_diagnostic, local_diagnostic);
+                        let res = Self::exec(
+                            vm,
+                            state,
+                            s,
+                            source_manager,
+                            global_diagnostic,
+                            local_diagnostic,
+                        );
                         let temp_end = state.cursor;
                         let len = temp_end - temp_start;
                         if res {
@@ -640,7 +686,14 @@ impl LexerVmNode {
             }
             VmNode::Optional(off) => {
                 let off = *off as usize;
-                let _ = Self::exec(vm, state, s, source_manager, global_diagnostic, local_diagnostic);
+                let _ = Self::exec(
+                    vm,
+                    state,
+                    s,
+                    source_manager,
+                    global_diagnostic,
+                    local_diagnostic,
+                );
                 return (true, off);
             }
             VmNode::Repetition(off) => {
@@ -659,8 +712,14 @@ impl LexerVmNode {
                     }
 
                     let current_cursor = state.cursor;
-                    let res = Self::exec(vm, state, s, source_manager, global_diagnostic, local_diagnostic);
-
+                    let res = Self::exec(
+                        vm,
+                        state,
+                        s,
+                        source_manager,
+                        global_diagnostic,
+                        local_diagnostic,
+                    );
                     if !res {
                         break;
                     }
@@ -685,7 +744,14 @@ impl LexerVmNode {
                 let pc = state.pc;
                 let off = *off as usize;
                 state.pc = *addr as usize;
-                let is_valid = Self::exec(vm, state, s, source_manager, global_diagnostic, local_diagnostic);
+                let is_valid = Self::exec(
+                    vm,
+                    state,
+                    s,
+                    source_manager,
+                    global_diagnostic,
+                    local_diagnostic,
+                );
                 if is_valid {
                     let (_, t) = state.result.as_mut().unwrap();
                     *t = TokenKind::CustomToken(*l);
@@ -693,19 +759,35 @@ impl LexerVmNode {
                 state.pc = pc + off;
             }
             VmNode::DebugPrint => {}
-            VmNode::ErrorScope { error_id, off, span } => {
+            VmNode::ErrorScope {
+                error_id,
+                off,
+                span,
+            } => {
                 let off = *off as usize;
                 if s.is_empty() {
                     return (false, off);
                 }
-                
+
                 let current_cursor = state.cursor;
-                if !Self::exec(vm, state, s, source_manager, global_diagnostic, local_diagnostic) {
+                if !Self::exec(
+                    vm,
+                    state,
+                    s,
+                    source_manager,
+                    global_diagnostic,
+                    local_diagnostic,
+                ) {
+                    let l_diag = local_diagnostic
+                        .take()
+                        .unwrap_or(DiagnosticBag::new(global_diagnostic.get_filepath()).into());
+
                     {
-                        let text_span = Span::from_usize(current_cursor, state.cursor.max(current_cursor + 1));
+                        let text_span =
+                            Span::from_usize(current_cursor, state.cursor.max(current_cursor + 1));
                         let error = vm.errors.get(*error_id as usize).unwrap();
                         let info = source_manager.get_source_info(text_span);
-                        local_diagnostic
+                        l_diag
                             .builder()
                             .report(
                                 DiagnosticLevel::Error,
@@ -720,12 +802,13 @@ impl LexerVmNode {
                     {
                         let span = *span;
                         let info = source_manager.0.get_source_info(span);
-                        local_diagnostic
+                        l_diag
                             .builder()
                             .report(DiagnosticLevel::Info, "All Rules failed", info, None)
                             .add_info("Rule defined here", Some(source_manager.0.fix_span(span)))
                             .commit();
                     }
+                    local_diagnostic.replace(l_diag);
                     return (false, off);
                 }
 
@@ -745,7 +828,7 @@ pub(crate) struct LexerVm {
     identifiers: HashMap<UniqueString, (usize, bool)>,
     def_identifiers: Vec<(usize, UniqueString)>,
     errors: SmallVec<[String; 1]>,
-    local_diagnostic: Diagnostic,
+    is_scoped: bool,
 }
 
 impl EbnfIdentifierMatcher for LexerVm {
@@ -755,13 +838,13 @@ impl EbnfIdentifierMatcher for LexerVm {
 }
 
 impl LexerVm {
-    pub(crate) fn new(filepath: PathBuf) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             nodes: Vec::new(),
             identifiers: HashMap::new(),
             def_identifiers: Vec::new(),
             errors: SmallVec::new(),
-            local_diagnostic: DiagnosticBag::new(filepath).into()
+            is_scoped: false,
         }
     }
 
@@ -775,12 +858,20 @@ impl LexerVm {
         s: &'b [u8],
         source_manager: RelativeSourceManager<'b>,
         global_diagnostic: &Diagnostic,
+        local_diagnostic: &mut Option<Diagnostic>,
         state: Option<&LexerVmState>,
     ) -> LexerMatchResult {
         let mut temp_state = VmState::new(id);
         state.map(|s| temp_state.merge_call_stack(s));
 
-        let is_valid = LexerVmNode::exec(self, &mut temp_state, s, source_manager, global_diagnostic, &self.local_diagnostic);
+        let is_valid = LexerVmNode::exec(
+            self,
+            &mut temp_state,
+            s,
+            source_manager,
+            global_diagnostic,
+            local_diagnostic,
+        );
 
         if !is_valid {
             None
@@ -814,6 +905,10 @@ impl EbnfVm<DefaultLexerEbnfParserMatcher, LexerVm, IRLexerEbnfParserMatcher> fo
 
     fn get_mut_nodes(&mut self) -> &mut Vec<LexerVmNode> {
         &mut self.nodes
+    }
+
+    fn set_is_scoped(&mut self, is_scoped: bool) {
+        self.is_scoped = is_scoped;
     }
 
     fn add_def(&mut self, name: UniqueString, index: usize, is_def: bool) -> Option<usize> {
@@ -910,7 +1005,7 @@ impl EbnfVm<DefaultLexerEbnfParserMatcher, LexerVm, IRLexerEbnfParserMatcher> fo
         }
         println!("\nIdentifiers: {:?}", self.def_identifiers);
     }
-    
+
     fn add_error(&mut self, message: String) -> u16 {
         let id = self.errors.len() as u16;
         self.errors.push(message);
@@ -927,9 +1022,9 @@ impl LexerEbnfMatcher for LexerVm {
         diagnostic: &crate::eoc::utils::diagnostic::Diagnostic,
         state: Option<&LexerVmState>,
     ) -> Option<(&'b [u8], TokenKind)> {
-        self.local_diagnostic.clear();
         if let Some((id, _)) = self.identifiers.get(&kind.as_unique_str()).copied() {
-            let temp = self.run(id, s, source_manager, diagnostic, state)
+            let temp = self
+                .run(id, s, source_manager, diagnostic, &mut None, state)
                 .map(|(r, k)| (s[r.as_range()].as_ref(), k));
             temp
         } else {
@@ -949,33 +1044,41 @@ impl LexerEbnfMatcher for LexerVm {
             for (k, name) in self.def_identifiers.iter().rev().copied() {
                 let tx = tx.clone();
                 scope.spawn(move |_| {
-                    let mut temp = self.run(k, s, source_manager, diagnostic, state);
+                    let mut local_diagnostic = None;
+                    let mut temp = self.run(
+                        k,
+                        s,
+                        source_manager,
+                        diagnostic,
+                        &mut local_diagnostic,
+                        state,
+                    );
                     temp.iter_mut().for_each(|(s, t)| {
                         *s = source_manager.abs_span(*s);
                         if *t == TokenKind::Unknown {
                             *t = TokenKind::CustomToken(name);
                         }
                     });
-                    let _ = tx.send((k, temp));
+                    let _ = tx.send((k, temp, local_diagnostic));
                 });
             }
         });
         let mut res = Vec::new();
+        let mut diags = Vec::new();
         for _ in 0..(self.def_identifiers.len()) {
-            if let Ok((temp, data)) = rx.recv() {
+            if let Ok((temp, data, diag)) = rx.recv() {
                 if let Some((sp, k)) = data {
                     res.push((temp, (sp, k)))
+                }
+
+                if let Some(d) = diag {
+                    diags.push(d);
                 }
             }
         }
 
-        // res.iter().for_each(|(_, (sp, k))| {
-        //     println!("{:?} => {}", k, std::str::from_utf8(source_manager.0[*sp].as_ref()).unwrap());  
-        // });
         if res.is_empty() {
-            if self.local_diagnostic.has_error() {
-                diagnostic.append(&self.local_diagnostic);
-            }
+            diags.into_iter().for_each(|d| diagnostic.append(d));
         }
         res.sort_unstable_by_key(|(k, _)| *k);
         res.pop().map(|(_, v)| v)
@@ -988,7 +1091,7 @@ impl LexerEbnfMatcher for LexerVm {
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &Diagnostic,
     ) -> LexerMatchResult {
-        self.run(addr, s, source_manager, diagnostic, None)
+        self.run(addr, s, source_manager, diagnostic, &mut None, None)
     }
 
     fn is_default(&self) -> bool {
@@ -997,5 +1100,9 @@ impl LexerEbnfMatcher for LexerVm {
 
     fn is_ir(&self) -> bool {
         false
+    }
+
+    fn is_scoped(&self) -> bool {
+        self.is_scoped
     }
 }
