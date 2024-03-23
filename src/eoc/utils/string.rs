@@ -37,6 +37,12 @@ impl UniqueString {
         Self(s)
     }
 
+    pub(crate) fn from_static(s: &'static str) -> Self {
+        let mut writer = STRING_INTERNER.write().unwrap();
+        writer.insert(s);
+        Self(s)
+    }
+
     fn get(s: &str) -> Option<&'static str> {
         let reader = STRING_INTERNER.write().unwrap();
         reader.get(s).copied()
