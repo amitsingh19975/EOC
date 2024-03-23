@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock, RwLockWriteGuard};
 
@@ -380,7 +380,7 @@ pub trait DiagnosticReporter {
     fn has_error(&self) -> bool;
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone)]
 pub struct DiagnosticBag {
     messages: Vec<DiagnosticBase>,
     filepath: PathBuf,
@@ -426,6 +426,7 @@ struct StreamingDiagnosticBagInner {
     writer: Box<dyn std::io::Write>,
 }
 
+#[derive(Clone)]
 pub struct StreamingDiagnosticBag {
     inner: Arc<RwLock<StreamingDiagnosticBagInner>>,
     filepath: PathBuf,
@@ -473,9 +474,17 @@ enum DiagnosticInner {
     Bag(DiagnosticBag),
 }
 
+#[derive(Clone)]
 pub struct Diagnostic {
     inner: Arc<RwLock<DiagnosticInner>>,
-} 
+}
+
+impl Debug for Diagnostic {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let inner = self.inner.read().unwrap();
+        inner.fmt(f)
+    }
+}
 
 impl Display for StreamingDiagnosticBag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -556,6 +565,36 @@ impl Diagnostic {
     pub(crate) fn has_error(&self) -> bool {
         let inner = self.inner.read().unwrap();
         inner.has_error()
+    }
+
+    pub(crate) fn append(&self, other: &Diagnostic) {
+        let mut inner = self.inner.write().unwrap();
+        let mut other_inner = other.inner.write().unwrap();
+        match &mut *other_inner {
+            DiagnosticInner::Bag(b) => {
+                for message in b.iter() {
+                    inner.add_message(message.clone());
+                }
+                b.messages.clear();
+            },
+            DiagnosticInner::Stream(s) => {
+                for message in s.iter() {
+                    inner.add_message(message.clone());
+                }
+            }
+        }
+    }
+
+    pub(crate) fn clear(&self) {
+        let mut inner = self.inner.write().unwrap();
+        match &mut *inner {
+            DiagnosticInner::Bag(b) => {
+                b.messages.clear();
+            },
+            DiagnosticInner::Stream(s) => {
+                s.inner.write().unwrap().writer.flush().unwrap();
+            }
+        }
     }
 }
 

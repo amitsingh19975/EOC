@@ -59,10 +59,18 @@ impl<T: Debug> Debug for Ref<T> {
     }
 }
 
-#[derive(Clone)]
 pub(crate) enum ImmRef<T> {
     Owned(Pin<Box<T>>),
     Borrowed(*const T),
+}
+
+impl<T> Clone for ImmRef<T> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Owned(inner) => Self::Borrowed(inner.as_ref().get_ref() as *const T),
+            Self::Borrowed(inner) => Self::Borrowed(*inner),
+        }
+    }
 }
 
 impl<T> ImmRef<T> {

@@ -202,7 +202,7 @@ impl LexerEbnfParserMatcherInner {
             return Self::new();
         }
 
-        let mut vm = LexerVm::new();
+        let mut vm = LexerVm::new(diagnostic.get_filepath());
         vm.from_expr(expr, scopes, diagnostic, &mut Default::default());
         EbnfParserMatcherInner::Vm(vm)
     }

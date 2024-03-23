@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt::Display};
+use std::{collections::{HashMap, HashSet}, fmt::Display};
 
 use crate::eoc::{
     lexer::{str_utils::ByteToCharIter, token::TokenKind},
@@ -115,8 +115,17 @@ impl PartialEq<[u8]> for TerminalValue {
 
 type EbnfExprMaxByteLen = u8;
 
+pub(crate) type EbnfExprErrorMessage = HashMap<String, String>;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum EbnfExpr {
+    Import(HashSet<String>),
+    Errors(EbnfExprErrorMessage),
+    ErrorLabel {
+        label: String,
+        expr: Box<EbnfExpr>,
+        span: Span
+    },
     Identifier(String, Option<(SourceManagerDiagnosticInfo, Span)>),
     Alternative(Vec<EbnfExpr>, HashSet<TerminalValue>, EbnfExprMaxByteLen),
     Concat(Vec<EbnfExpr>, EbnfExprMaxByteLen),
@@ -146,34 +155,6 @@ pub(crate) enum EbnfExpr {
 }
 
 impl EbnfExpr {
-    fn substitute_extend(&mut self, old_name: &str, new_name: &str) -> bool {
-        match self {
-            Self::Variable { expr, .. } => expr.substitute_extend(old_name, new_name),
-            Self::Alternative(exprs, _, ..)
-            | Self::Concat(exprs, ..)
-            | Self::Exception(exprs, ..)
-            | Self::Extend(exprs, ..) => {
-                let mut has_substituted = false;
-                for expr in exprs.iter_mut() {
-                    has_substituted = expr.substitute_extend(old_name, new_name) || has_substituted;
-                }
-                has_substituted
-            }
-            Self::Optional(expr, ..) | Self::Repetition(expr, ..) => {
-                expr.substitute_extend(old_name, new_name)
-            }
-            Self::Identifier(name, ..) => {
-                if name == old_name {
-                    *name = new_name.to_string();
-                    true
-                } else {
-                    false
-                }
-            }
-            _ => false,
-        }
-    }
-
     pub(super) fn is_char(&self) -> bool {
         match self {
             EbnfExpr::Terminal(t) => t.is_char(),
@@ -198,6 +179,13 @@ impl EbnfExpr {
     pub(super) fn is_debug_print(&self) -> bool {
         match self {
             EbnfExpr::DebugPrint => true,
+            _ => false,
+        }
+    }
+
+    pub(super) fn is_import(&self) -> bool {
+        match self {
+            EbnfExpr::Import(_) => true,
             _ => false,
         }
     }
@@ -330,7 +318,7 @@ impl Display for EbnfExpr {
                 Ok(())
             }
             EbnfExpr::UnboundedExpr(e) => write!(f, "{}", e),
-            EbnfExpr::Identifier(name, ..) => write!(f, "{}", name),
+            EbnfExpr::Identifier(name, ..) => write!(f, "{name}"),
             EbnfExpr::Variable { name, expr, is_def } => {
                 if *is_def {
                     write!(f, "{} ::= {};", name, expr)
@@ -414,6 +402,20 @@ impl Display for EbnfExpr {
             EbnfExpr::AnyChar => write!(f, "."),
             EbnfExpr::LabelledExpr { label, expr } => write!(f, "{}: {}", label, expr),
             EbnfExpr::DebugPrint => write!(f, "debug_print"),
+            EbnfExpr::Import(path) => {
+                if path.is_empty() {
+                    write!(f, "import @all")
+                } else {
+                    write!(f, "import {}", path.iter().map(|s| s.clone()).collect::<Vec<_>>().join(", "))
+                }
+            },
+            EbnfExpr::Errors(err) => {
+                for (key, value) in err.iter() {
+                    write!(f, "#{key} = \"{value}\"\n")?;
+                }
+                Ok(())
+            }
+            EbnfExpr::ErrorLabel { label, expr, .. } => write!(f, "{expr}#{label}"),
         }
     }
 }

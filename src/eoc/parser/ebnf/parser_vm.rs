@@ -1,6 +1,8 @@
 #![allow(dead_code, unused_variables)]
 
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::{HashMap, HashSet}, fmt::Display};
+
+use smallvec::SmallVec;
 
 use crate::eoc::{
     lexer::{
@@ -24,23 +26,24 @@ type ParserVmNode = VmNode;
 impl Display for ParserVmNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ParserVmNode::Call(id) => write!(f, "Call({})", id),
-            ParserVmNode::NativeCall(k) => write!(f, "NativeCall({:?})", k),
-            ParserVmNode::Terminal(t) => write!(f, "Terminal('{}')", t),
-            ParserVmNode::TerminalHash(terms, hash) => {
+            Self::Call(id) => write!(f, "Call({})", id),
+            Self::NativeCall(k) => write!(f, "NativeCall({:?})", k),
+            Self::Terminal(t) => write!(f, "Terminal('{}')", t),
+            Self::TerminalHash(terms, hash) => {
                 write!(f, "TerminalHash({:?}, {:?})", terms, hash)
             }
-            ParserVmNode::Range(lhs, rhs, inclusive) => {
+            Self::Range(lhs, rhs, inclusive) => {
                 write!(f, "Range({}, {}, {})", lhs, rhs, inclusive)
             }
-            ParserVmNode::AnyChar => write!(f, "AnyChar"),
-            ParserVmNode::Alternative(a, b) => write!(f, "Alternative({}, {})", a, b),
-            ParserVmNode::Concat(a, b) => write!(f, "Concat({}, {})", a, b),
-            ParserVmNode::Exception(a, b) => write!(f, "Exception({}, {})", a, b),
-            ParserVmNode::Optional(a) => write!(f, "Optional({})", a),
-            ParserVmNode::Repetition(a) => write!(f, "Repetition({})", a),
-            ParserVmNode::Label(a, addr, off) => write!(f, "Label({}, {}, {})", a, addr, off),
-            ParserVmNode::DebugPrint => write!(f, "DebugPrint"),
+            Self::AnyChar => write!(f, "AnyChar"),
+            Self::Alternative(a, b) => write!(f, "Alternative({}, {})", a, b),
+            Self::Concat(a, b) => write!(f, "Concat({}, {})", a, b),
+            Self::Exception(a, b) => write!(f, "Exception({}, {})", a, b),
+            Self::Optional(a) => write!(f, "Optional({})", a),
+            Self::Repetition(a) => write!(f, "Repetition({})", a),
+            Self::Label(a, addr, off) => write!(f, "Label({}, {}, {})", a, addr, off),
+            Self::DebugPrint => write!(f, "DebugPrint"),
+            Self::ErrorScope { error_id, off, span } => write!(f, "ErrorScope({}, {}, {:?})", error_id, off, span),
         }
     }
 }
@@ -49,6 +52,7 @@ impl Display for ParserVmNode {
 pub(crate) struct ParserVm {
     nodes: Vec<ParserVmNode>,
     identifiers: HashMap<UniqueString, (usize, bool)>,
+    errors: SmallVec<[String; 1]>,
 }
 
 impl ParserEbnfMatcher for ParserVm {
@@ -68,6 +72,7 @@ impl ParserVm {
         Self {
             nodes: Vec::new(),
             identifiers: HashMap::new(),
+            errors: SmallVec::new(),
         }
     }
 
@@ -113,6 +118,7 @@ impl EbnfVm<DefaultParserEbnfMatcher, ParserVm, IRParserMatcher> for ParserVm {
         name: UniqueString,
         scopes: &'a ParserEbnfParserMatcher,
         should_look_in_current_scope: bool,
+        import_list: &HashSet<String>
     ) -> Option<(
         usize,
         Option<ImmRef<EbnfParserMatcherInner<DefaultParserEbnfMatcher, ParserVm, IRParserMatcher>>>,
@@ -133,12 +139,13 @@ impl EbnfVm<DefaultParserEbnfMatcher, ParserVm, IRParserMatcher> for ParserVm {
         name: S,
         scopes: &'a ParserEbnfParserMatcher,
         should_look_in_current_scope: bool,
+        import_list: &HashSet<String>
     ) -> Option<(
         usize,
         Option<ImmRef<EbnfParserMatcherInner<DefaultParserEbnfMatcher, ParserVm, IRParserMatcher>>>,
     )> {
         let name = UniqueString::try_new(name)?;
-        self.get_identifier_with_scope(name, scopes, should_look_in_current_scope)
+        self.get_identifier_with_scope(name, scopes, should_look_in_current_scope, import_list)
     }
 
     fn print_in_range(&self, start: usize, end: usize) {
@@ -151,5 +158,11 @@ impl EbnfVm<DefaultParserEbnfMatcher, ParserVm, IRParserMatcher> for ParserVm {
             println!("");
         }
         println!("\nIdentifiers: {:?}", self.identifiers);
+    }
+    
+    fn add_error(&mut self, message: String) -> u16 {
+        let id = self.errors.len() as u16;
+        self.errors.push(message);
+        id
     }
 }

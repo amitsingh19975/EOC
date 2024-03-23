@@ -1,27 +1,29 @@
 #![allow(dead_code)]
 
 use std::{
-    collections::HashSet,
-    slice::Iter
+    collections::{HashMap, HashSet},
+    f32::consts::E,
+    slice::Iter,
 };
 
 use crate::eoc::{
     lexer::{
         str_utils::decode_unicode_escape_sequence,
         token::{Token, TokenKind},
-        utils::ParenMatching
+        utils::ParenMatching,
     },
     utils::{
         diagnostic::{Diagnostic, DiagnosticLevel},
         source_manager::{SourceManager, SourceManagerDiagnosticInfo},
-        span::Span, string::UniqueString,
+        span::Span,
+        string::UniqueString,
     },
 };
 
 use super::expr::{EbnfExpr, TerminalValue};
 
 #[derive(Clone, Copy)]
-pub(crate) struct RelativeSourceManager<'a>(&'a SourceManager, u32);
+pub(crate) struct RelativeSourceManager<'a>(pub(crate) &'a SourceManager, u32);
 
 impl<'a> RelativeSourceManager<'a> {
     pub(crate) fn new(source_manager: &'a SourceManager, base_pos: u32) -> Self {
@@ -74,10 +76,12 @@ impl<'a> EbnfParser<'a> {
             tokens,
             mode,
             cursor: 0,
-            allow_unbounded
+            allow_unbounded,
         };
 
-        parser.parse_statements()
+        let temp = parser.parse_statements();
+        println!("{}", temp);
+        temp
     }
 
     fn is_empty(&self) -> bool {
@@ -103,11 +107,16 @@ impl<'a> EbnfParser<'a> {
 
     fn parse_statements(&mut self) -> EbnfExpr {
         let mut statements = Vec::new();
+        let mut errors = HashMap::new();
+        let mut import_list = HashSet::new();
 
         while !self.is_empty() {
             let span = self.peek().unwrap().span;
-            if let Some((expr, _)) = self.parse_statement() {
-                let current_span = self.peek().map(|t| Span::new(span.start, t.span.end)).unwrap_or(span);
+            if let Some((expr, _)) = self.parse_statement(&mut errors, &mut import_list) {
+                let current_span = self
+                    .peek()
+                    .map(|t| Span::new(span.start, t.span.end))
+                    .unwrap_or(span);
                 let is_unbounded = expr.is_unbounded();
                 statements.push(expr);
                 if is_unbounded && !self.is_empty() {
@@ -128,7 +137,12 @@ impl<'a> EbnfParser<'a> {
                 }
             }
         }
-        
+
+        statements.insert(0, EbnfExpr::Errors(errors));
+        if import_list.is_empty() {
+            import_list.insert("@all".to_string());
+        }
+        statements.insert(0, EbnfExpr::Import(import_list));
         EbnfExpr::Statements(statements, 1)
     }
 
@@ -145,6 +159,7 @@ impl<'a> EbnfParser<'a> {
             TokenKind::Plus => (7, 8),
             TokenKind::Range | TokenKind::RangeEqual => (9, 10),
             TokenKind::Colon => (12, 13),
+            TokenKind::Hash => (14, 15),
             _ => (0, 0),
         }
     }
@@ -169,16 +184,120 @@ impl<'a> EbnfParser<'a> {
         (EbnfExpr::Terminal(terminal), span)
     }
 
-    fn parse_primary(&mut self) -> Option<(EbnfExpr, Span)> {
+    fn parse_import_list_helper(&self, import_list: &mut HashSet<String>, path: String) {
+        let has_none = import_list.contains("@none");
+        if import_list.contains("@all") || import_list.contains("@none") {
+            if import_list.len() != 1 {
+                import_list.clear();
+                if has_none {
+                    import_list.insert("@none".to_string());
+                } else {
+                    import_list.insert("@all".to_string());
+                }
+            }
+            return;
+        }
+
+        if import_list.contains(&path) {
+            return;
+        }
+
+        import_list.insert(path);
+    }
+
+    fn parse_import_list(&mut self, import_list: &mut HashSet<String>) {
+        loop {
+            let token = self.next();
+            if token.is_none() {
+                break;
+            }
+            let token = token.unwrap().clone();
+            match token.kind {
+                TokenKind::AtSign => {
+                    let Some(token) = self.next().copied() else {
+                        self.diagnostic
+                            .builder()
+                            .report(
+                                DiagnosticLevel::Error,
+                                "Expected identifier after '@'",
+                                self.source_manager.get_source_info(token.span),
+                                None,
+                            )
+                            .add_info(
+                                "Try add identifier after this",
+                                Some(self.source_manager.fix_span(token.span)),
+                            )
+                            .commit();
+                        break;
+                    };
+                    if token.kind != TokenKind::Identifier {
+                        self.diagnostic
+                            .builder()
+                            .report(
+                                DiagnosticLevel::Error,
+                                format!("Expected identifier, but found {:?}", token.kind),
+                                self.source_manager.get_source_info(token.span),
+                                None,
+                            )
+                            .add_info(
+                                "Try adding identifier that you want to import, like \"import identifier, number;\", \"import @all;\", etc.",
+                                Some(self.source_manager.fix_span(token.span)),
+                            )
+                            .commit();
+                        break;
+                    }
+                    let mut path = self.get_string_from_token(&token);
+                    path.insert(0, '@');
+                    self.parse_import_list_helper(import_list, path);
+                    if self.peek_kind() != Some(TokenKind::Comma) {
+                        break;
+                    }
+                }
+                TokenKind::Identifier => {
+                    let path = self.get_string_from_token(&token);
+                    self.parse_import_list_helper(import_list, path);
+                    if self.peek_kind() != Some(TokenKind::Comma) {
+                        break;
+                    }
+                }
+                TokenKind::Comma => {}
+                TokenKind::Semicolon => break,
+                _ => {
+                    self.diagnostic
+                        .builder()
+                        .report(
+                            DiagnosticLevel::Error,
+                            format!("Expected identifier in import list, but found {:?}", token.kind),
+                            self.source_manager.get_source_info(token.span),
+                            None,
+                        )
+                        .add_info(
+                            "Try adding identifier that you want to import, like \"import identifier, number;\", \"import @all;\", etc.",
+                            Some(self.source_manager.fix_span(token.span)),
+                        )
+                        .commit();
+                    break;
+                }
+            }
+        }
+    }
+
+    fn parse_primary(&mut self, import_list: &mut HashSet<String>) -> Option<(EbnfExpr, Span)> {
         let token = self.next().unwrap().clone();
         let span = token.span;
+
         match token.kind {
             TokenKind::Identifier => {
                 let name = self.get_string_from_token(&token);
-                if name == "debug_print" {
-                    Some((EbnfExpr::DebugPrint, span))
-                } else {
-                    Some((
+                match name.as_str() {
+                    "debug_print" => {
+                        return Some((EbnfExpr::DebugPrint, span));
+                    }
+                    "import" => {
+                        self.parse_import_list(import_list);
+                        return None;
+                    }
+                    _ => Some((
                         EbnfExpr::Identifier(
                             name,
                             Some((
@@ -187,20 +306,27 @@ impl<'a> EbnfParser<'a> {
                             )),
                         ),
                         span,
-                    ))
+                    )),
                 }
-            },
+            }
             TokenKind::Terminal => Some(self.get_terminal_from_token(&token)),
             TokenKind::Dot => Some((EbnfExpr::AnyChar, span)),
             TokenKind::Semicolon => None,
-            _ => None
+            _ => None,
         }
     }
 
-    fn parse_paren_expr(&mut self, open: TokenKind, min_bp: u8, labels: &mut Vec<(UniqueString, Span)>) -> Option<(EbnfExpr, Span)> {
+    fn parse_paren_expr(
+        &mut self,
+        open: TokenKind,
+        min_bp: u8,
+        labels: &mut Vec<(UniqueString, Span)>,
+        errors: &mut HashMap<String, String>,
+        import_list: &mut HashSet<String>,
+    ) -> Option<(EbnfExpr, Span)> {
         let close = ParenMatching::get_other_pair(open).unwrap();
 
-        if let Some((expr, e_span)) = self.parse_expr(min_bp, labels) {
+        if let Some((expr, e_span)) = self.parse_expr(min_bp, labels, errors, import_list) {
             if self.peek_kind() != Some(close) {
                 self.diagnostic
                     .builder()
@@ -226,7 +352,12 @@ impl<'a> EbnfParser<'a> {
         None
     }
 
-    fn parse_expr_helper(&mut self, labels: &mut Vec<(UniqueString, Span)>) -> Option<(EbnfExpr, Span)> {
+    fn parse_expr_helper(
+        &mut self,
+        labels: &mut Vec<(UniqueString, Span)>,
+        errors: &mut HashMap<String, String>,
+        import_list: &mut HashSet<String>,
+    ) -> Option<(EbnfExpr, Span)> {
         let token = self.peek();
         if token.is_none() {
             return None;
@@ -236,16 +367,16 @@ impl<'a> EbnfParser<'a> {
         match token.kind {
             TokenKind::OpenParen => {
                 self.next();
-                self.parse_paren_expr(TokenKind::OpenParen, 0, labels)
+                self.parse_paren_expr(TokenKind::OpenParen, 0, labels, errors, import_list)
             }
             TokenKind::OpenBracket => {
                 self.next();
-                self.parse_paren_expr(TokenKind::OpenBracket, 0, labels)
+                self.parse_paren_expr(TokenKind::OpenBracket, 0, labels, errors, import_list)
                     .map(|(expr, span)| (EbnfExpr::Optional(Box::new(expr), 1), span))
             }
             TokenKind::OpenBrace => {
                 self.next();
-                self.parse_paren_expr(TokenKind::OpenBrace, 0, labels)
+                self.parse_paren_expr(TokenKind::OpenBrace, 0, labels, errors, import_list)
                     .map(|(expr, span)| (EbnfExpr::Repetition(Box::new(expr), 1), span))
             }
             TokenKind::Dollar => {
@@ -267,7 +398,9 @@ impl<'a> EbnfParser<'a> {
                     return None;
                 }
 
-                let Some((EbnfExpr::Identifier(id, lhs_info), span)) = self.parse_primary() else {
+                let Some((EbnfExpr::Identifier(id, lhs_info), span)) =
+                    self.parse_primary(import_list)
+                else {
                     self.diagnostic
                         .builder()
                         .report(
@@ -285,7 +418,8 @@ impl<'a> EbnfParser<'a> {
                 };
 
                 let temp_id = id.clone();
-                if let Some((_, last_span)) = labels.iter().find(|(id, _)| id == &temp_id).copied() {
+                if let Some((_, last_span)) = labels.iter().find(|(id, _)| id == &temp_id).copied()
+                {
                     self.diagnostic
                         .builder()
                         .report(
@@ -294,10 +428,7 @@ impl<'a> EbnfParser<'a> {
                             self.source_manager.get_source_info(span),
                             None,
                         )
-                        .add_info(
-                            "Rename the label",
-                            Some(self.source_manager.fix_span(span)),
-                        )
+                        .add_info("Rename the label", Some(self.source_manager.fix_span(span)))
                         .commit();
 
                     self.diagnostic
@@ -318,20 +449,18 @@ impl<'a> EbnfParser<'a> {
                 }
 
                 if self.peek_kind() != Some(TokenKind::Colon) {
-                    return Some(
-                        (
-                            EbnfExpr::LabelledExpr {
-                                label: id.clone(),
-                                expr: Box::new(EbnfExpr::Identifier(id, lhs_info)),
-                            },
-                            span,
-                        ),
-                    );
+                    return Some((
+                        EbnfExpr::LabelledExpr {
+                            label: id.clone(),
+                            expr: Box::new(EbnfExpr::Identifier(id, lhs_info)),
+                        },
+                        span,
+                    ));
                 }
 
                 self.next();
 
-                let Some((rhs, r_span)) = self.parse_expr(0, labels) else  {
+                let Some((rhs, r_span)) = self.parse_expr(0, labels, errors, import_list) else {
                     self.diagnostic
                         .builder()
                         .report(
@@ -349,16 +478,170 @@ impl<'a> EbnfParser<'a> {
                 };
 
                 Some((
-                    EbnfExpr::LabelledExpr { label: id, expr: Box::new(rhs) },
+                    EbnfExpr::LabelledExpr {
+                        label: id,
+                        expr: Box::new(rhs),
+                    },
                     r_span,
                 ))
             }
-            _ => self.parse_primary(),
+            _ => self.parse_primary(import_list),
         }
     }
 
-    fn parse_expr(&mut self, min_bp: u8, labels: &mut Vec<(UniqueString, Span)>) -> Option<(EbnfExpr, Span)> {
-        let mut lhs = self.parse_expr_helper(labels);
+    fn parse_error_expr(&mut self, errors: &mut HashMap<String, String>) -> bool {
+        let Some(temp_token) = self.peek() else {
+            return false;
+        };
+
+        if temp_token.kind != TokenKind::Hash {
+            return false;
+        }
+
+        let span = temp_token.span;
+        self.next();
+
+        let Some(token) = self.next().copied() else {
+            self.diagnostic
+                .builder()
+                .report(
+                    DiagnosticLevel::Error,
+                    "Expected identifier after '#'",
+                    self.source_manager.get_source_info(span),
+                    None,
+                )
+                .add_info(
+                    "Try add identifier after this",
+                    Some(self.source_manager.fix_span(span)),
+                )
+                .commit();
+            return false;
+        };
+
+        if token.kind != TokenKind::Identifier {
+            self.diagnostic
+                .builder()
+                .report(
+                    DiagnosticLevel::Error,
+                    format!("Expected identifier, but found '{:?}'", token.kind),
+                    self.source_manager.get_source_info(span),
+                    None,
+                )
+                .add_info(
+                    "Try add identifier after this",
+                    Some(self.source_manager.fix_span(span)),
+                )
+                .commit();
+            return false;
+        }
+
+        let name = self.get_string_from_token(&token);
+
+        let Some(eq_token) = self.next().copied() else {
+            self.diagnostic
+                .builder()
+                .report(
+                    DiagnosticLevel::Error,
+                    "Expected '='",
+                    self.source_manager.get_source_info(span),
+                    None,
+                )
+                .add_info(
+                    "Try add '=' after this",
+                    Some(self.source_manager.fix_span(span)),
+                )
+                .commit();
+            return false;
+        };
+
+        if eq_token.kind != TokenKind::Equal {
+            self.diagnostic
+                .builder()
+                .report(
+                    DiagnosticLevel::Error,
+                    format!("Expected '=', but found {:?}", eq_token.kind),
+                    self.source_manager.get_source_info(eq_token.span),
+                    None,
+                )
+                .add_info(
+                    "Try add '=' after this",
+                    Some(self.source_manager.fix_span(eq_token.span)),
+                )
+                .commit();
+            return false;
+        }
+
+        let Some(message) = self.next().copied() else {
+            self.diagnostic
+                .builder()
+                .report(
+                    DiagnosticLevel::Error,
+                    "Expected message after '='",
+                    self.source_manager.get_source_info(eq_token.span),
+                    None,
+                )
+                .add_info(
+                    "Try add message after this",
+                    Some(self.source_manager.fix_span(eq_token.span)),
+                )
+                .commit();
+            return false;
+        };
+
+        if message.kind != TokenKind::String && message.kind != TokenKind::Terminal {
+            self.diagnostic
+                .builder()
+                .report(
+                    DiagnosticLevel::Error,
+                    format!("Expected string, but found {:?}", message.kind),
+                    self.source_manager.get_source_info(message.span),
+                    None,
+                )
+                .add_info(
+                    "Try add string after this",
+                    Some(self.source_manager.fix_span(message.span)),
+                )
+                .commit();
+            return false;
+        }
+
+        let message = self.get_string_from_token(&message);
+
+        if self.peek_kind() == Some(TokenKind::Semicolon) {
+            self.next();
+        }
+
+        if errors.contains_key(&name) {
+            self.diagnostic
+                .builder()
+                .report(
+                    DiagnosticLevel::Error,
+                    format!("Re-declaration of error '{}'", name),
+                    self.source_manager.get_source_info(token.span),
+                    None,
+                )
+                .add_info(
+                    "Rename the error label",
+                    Some(self.source_manager.fix_span(token.span)),
+                )
+                .commit();
+        } else {
+            errors.insert(name, message);
+        }
+
+        return true;
+    }
+
+    fn parse_expr(
+        &mut self,
+        min_bp: u8,
+        labels: &mut Vec<(UniqueString, Span)>,
+        errors: &mut HashMap<String, String>,
+        import_list: &mut HashSet<String>,
+    ) -> Option<(EbnfExpr, Span)> {
+        while self.parse_error_expr(errors) {}
+
+        let mut lhs = self.parse_expr_helper(labels, errors, import_list);
 
         loop {
             let token = self.peek();
@@ -378,10 +661,7 @@ impl<'a> EbnfParser<'a> {
                 }
                 self.next();
                 let (lhs_expr, span) = lhs.unwrap();
-                lhs = Some((
-                    EbnfExpr::from_unary(token.kind.into(), lhs_expr),
-                    span,
-                ));
+                lhs = Some((EbnfExpr::from_unary(token.kind.into(), lhs_expr), span));
                 continue;
             }
 
@@ -391,6 +671,7 @@ impl<'a> EbnfParser<'a> {
                 | TokenKind::Exception
                 | TokenKind::Plus
                 | TokenKind::Range
+                | TokenKind::Hash
                 | TokenKind::RangeEqual => (token.kind, Self::infix_bp(token.kind)),
                 _ => {
                     break;
@@ -403,45 +684,94 @@ impl<'a> EbnfParser<'a> {
 
             self.next();
 
-            if let Some((rhs, rhs_span)) = self.parse_expr(right_bp, labels) {
-                let (lhs_expr, lhs_span) = lhs.unwrap();
-                if matches!(op, TokenKind::Range | TokenKind::RangeEqual) {
-                    if !lhs_expr.is_char() {
-                        self.diagnostic
-                            .builder()
-                            .report(
-                                DiagnosticLevel::Error,
-                                "Expected terminal",
-                                self.source_manager.get_source_info(lhs_span),
-                                None,
-                            )
-                            .add_info(
-                                "Use character for range",
-                                Some(self.source_manager.fix_span(lhs_span)),
-                            )
-                            .commit();
-                        return None;
+            if let Some((rhs, rhs_span)) = self.parse_expr(right_bp, labels, errors, import_list) {
+                let (lhs_expr, lhs_span) = lhs.as_ref().unwrap();
+                let lhs_span = *lhs_span;
+                match op {
+                    TokenKind::Range | TokenKind::RangeEqual => {
+                        if !lhs_expr.is_char() {
+                            self.diagnostic
+                                .builder()
+                                .report(
+                                    DiagnosticLevel::Error,
+                                    "Expected terminal",
+                                    self.source_manager.get_source_info(lhs_span),
+                                    None,
+                                )
+                                .add_info(
+                                    "Use character for range",
+                                    Some(self.source_manager.fix_span(lhs_span)),
+                                )
+                                .commit();
+                            return None;
+                        }
+                        if !rhs.is_char() {
+                            self.diagnostic
+                                .builder()
+                                .report(
+                                    DiagnosticLevel::Error,
+                                    "Expected terminal",
+                                    self.source_manager.get_source_info(rhs_span),
+                                    None,
+                                )
+                                .add_info(
+                                    "Use character for range",
+                                    Some(self.source_manager.fix_span(rhs_span)),
+                                )
+                                .commit();
+                            return None;
+                        }
                     }
-                    if !rhs.is_char() {
-                        self.diagnostic
-                            .builder()
-                            .report(
-                                DiagnosticLevel::Error,
-                                "Expected terminal",
-                                self.source_manager.get_source_info(rhs_span),
-                                None,
-                            )
-                            .add_info(
-                                "Use character for range",
-                                Some(self.source_manager.fix_span(rhs_span)),
-                            )
-                            .commit();
-                        return None;
+                    TokenKind::Hash => {
+                        let EbnfExpr::Identifier(label, ..) = rhs else {
+                            self.diagnostic
+                                .builder()
+                                .report(
+                                    DiagnosticLevel::Error,
+                                    "Expected error name after '#'",
+                                    self.source_manager.get_source_info(rhs_span),
+                                    None,
+                                )
+                                .add_info(
+                                    "Use identifier for error",
+                                    Some(self.source_manager.fix_span(rhs_span)),
+                                )
+                                .commit();
+                            return None;
+                        };
+
+                        if !errors.contains_key(&label) {
+                            self.diagnostic
+                                .builder()
+                                .report(
+                                    DiagnosticLevel::Error,
+                                    format!("Unknown error name '{}'", label),
+                                    self.source_manager.get_source_info(rhs_span),
+                                    None,
+                                )
+                                .add_info(
+                                    "Define error label, like '#error = \"message\";'",
+                                    Some(self.source_manager.fix_span(rhs_span)),
+                                )
+                                .commit();
+                            continue;
+                        }
+
+                        lhs = Some((
+                            EbnfExpr::ErrorLabel {
+                                label,
+                                expr: Box::new(lhs.unwrap().0),
+                                span: lhs_span,
+                            },
+                            rhs_span,
+                        ));
+                        continue;
                     }
+                    _ => {}
                 }
 
                 lhs = Some((
-                    EbnfExpr::try_merge_binary(op.into(), lhs_expr, rhs),
+                    EbnfExpr::try_merge_binary(op.into(), lhs.unwrap().0, rhs),
                     rhs_span,
                 ));
             } else {
@@ -465,15 +795,19 @@ impl<'a> EbnfParser<'a> {
         lhs
     }
 
-    fn parse_statement(&mut self) -> Option<(EbnfExpr, Span)> {
+    fn parse_statement(
+        &mut self,
+        errors: &mut HashMap<String, String>,
+        import_list: &mut HashSet<String>,
+    ) -> Option<(EbnfExpr, Span)> {
         let mut labels = Vec::new();
-        let lhs_expr = self.parse_expr(0, &mut labels);
+        let lhs_expr = self.parse_expr(0, &mut labels, errors, import_list);
         if lhs_expr.is_none() {
             return None;
         }
         let (mut lhs_expr, mut span) = lhs_expr.unwrap();
 
-        if lhs_expr.is_debug_print() {
+        if lhs_expr.is_debug_print() || lhs_expr.is_import() {
             return Some((lhs_expr, span));
         }
 
@@ -527,7 +861,7 @@ impl<'a> EbnfParser<'a> {
             return None;
         }
 
-        let rhs = self.parse_expr(0, &mut labels);
+        let rhs = self.parse_expr(0, &mut labels, errors, import_list);
         if rhs.is_none() {
             self.diagnostic
                 .builder()
@@ -586,4 +920,3 @@ impl EbnfParserMatcherDef {
         self.0.iter()
     }
 }
-

@@ -750,7 +750,8 @@ impl Lexer {
             true,
         );
         if let Some(name_token) = name_token {
-            let name = std::str::from_utf8(&self.source_manager[name_token.span]).unwrap();
+            let slice = &self.source_manager[name_token.span];
+            let name = unsafe { std::str::from_utf8_unchecked(slice) };
             let mut matcher = LexerEbnfParserMatcher::default();
             matcher.from_expr(program, &self.diagnostics);
             let name = UniqueString::new(name);
@@ -1061,7 +1062,8 @@ impl Lexer {
         self.lex_identifier(matcher, tokens, false);
         let identifier = tokens.pop().unwrap();
         let id_span = identifier.span.clone();
-        let name = unsafe { std::str::from_utf8_unchecked(self.source_manager[id_span].as_ref()) };
+        let slice = &self.source_manager[id_span];
+        let name = unsafe { std::str::from_utf8_unchecked(slice) };
 
         if name == "lexer" {
             self.skip_whitespace().map(|t| tokens.push(t));

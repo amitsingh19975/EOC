@@ -224,6 +224,16 @@ impl<D, V, R> EbnfParserMatcherInner<D, V, R> {
                 nodes.push(VmNode::Label(l.clone(), start as u16, off as u16));
             }
             VmNode::DebugPrint => {}
+            VmNode::ErrorScope { error_id, off: _, span } => {
+                let start = nodes.len();
+                self.get_vm_code_for(nodes, id + 1);
+                let off = nodes.len() - start + 1;
+                nodes.push(VmNode::ErrorScope {
+                    error_id: *error_id,
+                    off: off as u16,
+                    span: *span,
+                });
+            }
         };
         return 1;
     }

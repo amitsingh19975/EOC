@@ -1,32 +1,26 @@
+```lexer(html)
+// import digit;
 
-```lexer(ir)
+#0 = "Invalid identifier"
+digit = digit | 'a';
+digit = digit | 'b';
+doc_tag ::= '<', '!', 'DOCTYPE', {whitespace}?, 'html', '>';
+start_tag ::= '<', identifier#0, '>'#0;
+end_tag ::= '<', '/', identifier, '>';
 
-digit = '0'..='9';
-hex_digit = '0'..='9' | 'a'..='f' | 'A'..='F';
-letter = 'a'..='z' | 'A'..='Z';
-id_punct = '$' | '.' | '_' | '-';
-
-decimal_literal = { digit };
-hexadecimal_literal = '0x', { hex_digit };
-integer_literal ::= decimal_literal | hexadecimal_literal;
-
-float_literal ::= ['-' | '+'], { digit }, '.', { digit }, (['e' | 'E'], ['-' | '+'], { digit })?;
-
-bare_id ::= ( letter | '_'? ), { letter | digit | ['_' | '$' | '.'] }?;
-
-suffix_id = { digit } | (( letter | id_punct ), { letter | id_punct | digit }?);
-value_id ::= '%', suffix_id;
-
-escaped_char = '\', ['a' | 'b' | 'f' | 'n' | 'r' | 't' | 'v' | '"' | "'"];
-any_unicode_string_character = (. - '\' - '"') | escaped_char;
-string_literal ::= '"', { any_unicode_string_character }, '"';
-any_unicode_character = (. - '\' - "'") | escaped_char;
-character_literal ::= "'", (any_unicode_character - "'"), "'"; 
-
+debug_print
 ```
 
-```ir
+```html
 
-"Testing"
+<!DOCTYPE html>
+<html>
+    <body>
+
+        <h1>My First Heading</h1>
+        <p>My first paragraph.</p>
+
+    </body>
+</html>
 
 ```

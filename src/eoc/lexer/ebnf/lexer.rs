@@ -161,7 +161,7 @@ impl<'a> EbnfLexer<'a> {
             }
 
             match c {
-                _ if c.is_alphabetic() => self.lex_identifier(&mut tokens),
+                _ if c.is_alphanumeric() => self.lex_identifier(&mut tokens),
                 '\'' | '"' => self.lex_terminal(&mut tokens),
                 '?' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
@@ -294,6 +294,16 @@ impl<'a> EbnfLexer<'a> {
                     tokens.push(Token::new(TokenKind::Dollar, span));
                     self.next_char();
                 }
+                '@' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    tokens.push(Token::new(TokenKind::AtSign, span));
+                    self.next_char();
+                }
+                '#' => {
+                    let span = Span::from_usize(self.cursor, self.cursor + 1);
+                    tokens.push(Token::new(TokenKind::Hash, span));
+                    self.next_char();
+                }
                 _ => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
                     let info = self.source_manager.get_source_info(span);
@@ -309,6 +319,9 @@ impl<'a> EbnfLexer<'a> {
                 }
             }
         }
+        // tokens.iter().for_each(|token| {
+        //     println!("{}", token.to_string(self.source_manager));
+        // });
         tokens
     }
 }

@@ -1,4 +1,8 @@
 #![allow(dead_code, unused_variables)]
+use std::collections::HashSet;
+
+use smallvec::SmallVec;
+
 use crate::eoc::{
     lexer::ebnf::{
         basic::{EbnfIdentifierMatcher, EbnfNodeMatcher, EbnfParserMatcher, EbnfParserMatcherInner},
@@ -13,7 +17,9 @@ use super::{
 };
 
 #[derive(Debug)]
-pub(crate) struct IRParserMatcher;
+pub(crate) struct IRParserMatcher {
+    errors: SmallVec<[String; 1]>,
+}
 
 impl ParserEbnfMatcher for IRParserMatcher {
     fn match_tokens(
@@ -62,6 +68,7 @@ impl EbnfVm<DefaultParserEbnfMatcher, ParserVm, IRParserMatcher> for IRParserMat
             IRParserMatcher,
         >,
         should_look_in_current_scope: bool,
+        import_list: &HashSet<String>
     ) -> Option<(
         usize,
         Option<
@@ -86,6 +93,7 @@ impl EbnfVm<DefaultParserEbnfMatcher, ParserVm, IRParserMatcher> for IRParserMat
             IRParserMatcher,
         >,
         should_look_in_current_scope: bool,
+        import_list: &HashSet<String>
     ) -> Option<(
         usize,
         Option<
@@ -103,6 +111,12 @@ impl EbnfVm<DefaultParserEbnfMatcher, ParserVm, IRParserMatcher> for IRParserMat
 
     fn print_in_range(&self, _start: usize, _end: usize) {
         todo!()
+    }
+    
+    fn add_error(&mut self, message: String) -> u16 {
+        let id = self.errors.len() as u16;
+        self.errors.push(message);
+        id
     }
 }
 
