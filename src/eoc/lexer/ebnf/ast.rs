@@ -2,7 +2,6 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    f32::consts::E,
     slice::Iter,
 };
 
@@ -80,7 +79,7 @@ impl<'a> EbnfParser<'a> {
         };
 
         let temp = parser.parse_statements();
-        println!("{}", temp);
+        // println!("{}", temp);
         temp
     }
 
