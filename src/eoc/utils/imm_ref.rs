@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::{fmt::Debug, ops::Deref, pin::Pin};
+use std::{fmt::Debug, ops::{Deref, DerefMut}, pin::Pin};
 
 pub(crate) struct Ref<T> {
     inner: Option<Pin<Box<T>>>,
@@ -31,19 +31,21 @@ impl<T> Ref<T> {
     pub(crate) fn take(&mut self) -> Ref<T> {
         Ref { inner: self.inner.take() }
     }
-
-    pub(crate) fn as_mut(&mut self) -> Pin<&mut T> {
-        assert_eq!(self.inner.is_some(), true);
-        let inner = self.inner.as_mut().unwrap().as_mut();
-        inner
-    }
 }
 
 impl<T> Deref for Ref<T> {
-    type Target = T;
+    type Target = Pin<Box<T>>;
 
     fn deref(&self) -> &Self::Target {
-        self.as_ref()
+        assert_eq!(self.inner.is_some(), true);
+        self.inner.as_ref().unwrap()
+    }
+}
+
+impl<T> DerefMut for Ref<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        assert_eq!(self.inner.is_some(), true);
+        self.inner.as_mut().unwrap()
     }
 }
 

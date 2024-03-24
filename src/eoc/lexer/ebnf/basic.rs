@@ -292,12 +292,12 @@ impl<D: EbnfIdentifierMatcher, V: EbnfIdentifierMatcher, R: EbnfIdentifierMatche
     ) -> Option<(usize, ImmRef<EbnfParserMatcherInner<D, V, R>>)> {
         let mut scope = self;
 
-        if let Some(id) = scope.current_scope.as_ref().get_identifier(name) {
+        if let Some(id) = scope.current_scope.get_identifier(name) {
             return Some((id, scope.current_scope.to_imm_ref()));
         }
 
         while let Some(parent_scope) = scope.parent_scope.as_ref() {
-            if let Some(id) = parent_scope.current_scope.as_ref().get_identifier(name) {
+            if let Some(id) = parent_scope.current_scope.get_identifier(name) {
                 return Some((id, parent_scope.current_scope.to_imm_ref()));
             }
             scope = parent_scope.as_ref();
