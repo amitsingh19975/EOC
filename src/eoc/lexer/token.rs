@@ -115,6 +115,7 @@ pub(crate) enum TokenKind {
 
     CustomCodeBlockStart(UniqueString),
     CustomCodeBlockEnd(UniqueString),
+    CustomCodeBlock(UniqueString),
     CustomToken(UniqueString),
     Unknown,
 }
