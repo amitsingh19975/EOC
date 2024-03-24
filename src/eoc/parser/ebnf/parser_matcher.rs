@@ -93,7 +93,7 @@ pub(crate) trait ParserEbnfMatcher {
     fn match_tokens(&self, id: u16, tokens: &[Token], cursor: usize) -> ParserEbnfMatcherResult;
 }
 
-pub(super) type ParserEbnfParserMatcherInner = EbnfParserMatcherInner<DefaultParserEbnfMatcher, ParserVm, IRParserMatcher>;
+pub(crate) type ParserEbnfParserMatcherInner = EbnfParserMatcherInner<DefaultParserEbnfMatcher, ParserVm, IRParserMatcher>;
 
 impl ParserEbnfMatcher for ParserEbnfParserMatcherInner {
     fn match_tokens(&self, id: u16, tokens: &[Token], cursor: usize) -> ParserEbnfMatcherResult {
