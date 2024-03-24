@@ -779,26 +779,13 @@ impl Lexer {
     fn try_lex_using_custom_matcher(
         &mut self,
         tokens: &mut Vec<Token>,
-        name: UniqueString,
-        name_span: Span,
+        name: UniqueString
     ) -> bool {
         if !self.block_lexer_matcher.contains_key(&name) {
-            self.cursor += self.skip_while_code_block_end(self.cursor).len();
-            let info = self.source_manager.get_source_info(name_span);
-            self.diagnostics
-                .builder()
-                .report(
-                    DiagnosticLevel::Error,
-                    "Unknown lexer block name",
-                    info,
-                    None,
-                )
-                .add_error(
-                    "Try defining a code block with this name",
-                    Some(self.source_manager.fix_span(name_span)),
-                )
-                .commit();
-            return false;
+            let code_span = self.skip_while_code_block_end(self.cursor);
+            self.cursor = code_span.end as usize + 3;
+            tokens.push(Token::new(TokenKind::CustomCodeBlock(name), code_span));
+            return false
         }
 
         let code_start = self.cursor;
@@ -915,6 +902,8 @@ impl Lexer {
                 let span = Span::from_usize(start, self.cursor);
                 self.cursor += 3;
                 return span;
+            } else if ch == '\\' {
+                self.next_char();
             }
 
             self.next_char();
@@ -1113,27 +1102,10 @@ impl Lexer {
             return true;
         }
 
-        let Some(u_name) = UniqueString::try_new(name) else {
-            let body_span = self.skip_while_code_block_end(self.cursor);
-            self.cursor += body_span.len();
-            let info = self.source_manager.get_source_info(id_span);
-            self.diagnostics
-                .builder()
-                .report(
-                    DiagnosticLevel::Error,
-                    "Unknown lexer block name",
-                    info,
-                    None,
-                )
-                .add_error(
-                    "Try defining a code block with this name",
-                    Some(self.source_manager.fix_span(id_span)),
-                )
-                .commit();
-            return true;
-        };
+        assert!(!name.is_empty());
 
-        self.try_lex_using_custom_matcher(tokens, u_name, id_span);
+        let u_name = UniqueString::new(name);
+        self.try_lex_using_custom_matcher(tokens, u_name);
 
         true
     }
