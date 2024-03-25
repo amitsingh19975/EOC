@@ -108,11 +108,11 @@ pub(crate) fn byte_to_char(source: &[u8]) -> (Option<char>, usize) {
     valid_utf8_character_with_char_len(source)
 }
 
-pub(crate) struct ByteToCharIter<'a>(&'a [u8]);
+pub(crate) struct ByteToCharIter<'a>(&'a [u8], usize);
 
 impl<'a> ByteToCharIter<'a> {
     pub fn new(bytes: &'a [u8]) -> Self {
-        ByteToCharIter(bytes)
+        ByteToCharIter(bytes, 0)
     }
 
     pub(crate) fn utf8_len_after_skip(&self, mut n: usize) -> usize {
@@ -127,6 +127,10 @@ impl<'a> ByteToCharIter<'a> {
         }
         size
     }
+
+    pub(crate) fn offset(&self) -> usize {
+        return self.1;
+    }
 }
 
 impl<'a> Iterator for ByteToCharIter<'a> {
@@ -137,8 +141,8 @@ impl<'a> Iterator for ByteToCharIter<'a> {
             return None;
         }
 
-        let (ch, size) = byte_to_char(self.0);
-        self.0 = &self.0[size..];
+        let (ch, size) = byte_to_char(self.0[self.1..].as_ref());
+        self.1 += size;
         ch
     }
 }
