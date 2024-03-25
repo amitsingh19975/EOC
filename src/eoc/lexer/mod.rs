@@ -10,7 +10,7 @@ use self::{
         lexer::EbnfLexer,
         native_call::NATIVE_CALL_KIND_ID,
         vm::LexerEbnfParserMatcher,
-    }, str_utils::ByteToCharIter, token::{Token, TokenKind}, utils::{
+    }, token::{Token, TokenKind}, utils::{
         is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point,
         CustomOperator, ParenMatching,
     }
