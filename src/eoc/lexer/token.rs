@@ -70,6 +70,7 @@ pub(crate) enum TokenKind {
     DoubleQuote, // "
     Hash, // #
     TripleBackTick, // ````
+    Underscore, // _
 
 
     // Comment, 

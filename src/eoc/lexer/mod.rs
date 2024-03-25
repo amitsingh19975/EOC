@@ -10,12 +10,10 @@ use self::{
         lexer::EbnfLexer,
         native_call::NATIVE_CALL_KIND_ID,
         vm::LexerEbnfParserMatcher,
-    },
-    token::{Token, TokenKind},
-    utils::{
+    }, str_utils::ByteToCharIter, token::{Token, TokenKind}, utils::{
         is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point,
         CustomOperator, ParenMatching,
-    },
+    }
 };
 use super::{
     ast::identifier::Identifier,
@@ -1232,9 +1230,10 @@ impl Lexer {
 
     fn lex_custom_operator_continue(&self, matcher: &LexerEbnfParserMatcher) -> Option<&[u8]> {
         match self.peek_char() {
-            Some(']') | Some('_') => {
+            Some(']') | Some('[') => {
                 return Some(&self.source_manager.get_source()[self.cursor..(self.cursor + 1)])
             }
+            Some('_') => return None,
             _ => {}
         }
 
@@ -2057,13 +2056,23 @@ impl Lexer {
         operator_span: Span,
     ) -> bool {
         let start = self.cursor;
-        self.next_char();
         let mut span = Span::from_usize(start, start);
+        let mut op_span = Span::from_usize(start, start);
         loop {
-            let is_valid_operator_continuation_code_point =
-                self.lex_custom_operator_continue(matcher);
-            if let Some(s) = is_valid_operator_continuation_code_point {
+            if let Some(s) = self.lex_custom_operator_continue(matcher) {
                 self.cursor += s.len();
+                op_span.end = self.cursor as u32;
+                continue;
+            }
+
+            if self.peek_char() == Some('_') {
+                let temp = op_span.trim(&self.source_manager);
+                if !temp.is_empty() {
+                    tokens.push(Token::new(TokenKind::Operator, temp));
+                }
+                tokens.push(Token::new(TokenKind::Underscore, Span::from_usize(self.cursor, self.cursor + 1)));
+                self.next_char();
+                op_span.start = self.cursor as u32;
                 continue;
             }
 
@@ -2080,11 +2089,17 @@ impl Lexer {
                 continue;
             }
 
+            op_span.end = self.cursor as u32;
+            op_span = op_span.trim(&self.source_manager);
+            if !op_span.is_empty() {
+                tokens.push(Token::new(TokenKind::Operator, op_span));
+            }
             break;
+            
         }
+
         span.end = self.cursor as u32;
         span = span.trim(&self.source_manager);
-        tokens.push(Token::new(TokenKind::Operator, span));
 
         if span.is_empty() {
             self.diagnostics
