@@ -4,12 +4,16 @@ use crate::eoc::lexer::ebnf::ast::EbnfParser;
 
 use self::{
     ebnf::{
-        ast::{EbnfParserMode, RelativeSourceManager}, basic::LexerEbnfMatcher, ir_matcher::IRLexerEbnfParserMatcher, lexer::EbnfLexer, native_call::NATIVE_CALL_KIND_ID, vm::LexerEbnfParserMatcher
+        ast::{EbnfParserMode, RelativeSourceManager},
+        basic::LexerEbnfMatcher,
+        ir_matcher::IRLexerEbnfParserMatcher,
+        lexer::EbnfLexer,
+        native_call::NATIVE_CALL_KIND_ID,
+        vm::LexerEbnfParserMatcher,
     },
     token::{Token, TokenKind},
     utils::{
         is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point,
-        is_valid_operator_continuation_code_point, is_valid_operator_start_code_point,
         CustomOperator, ParenMatching,
     },
 };
@@ -68,7 +72,7 @@ pub(crate) struct Lexer {
 impl Lexer {
     pub(crate) fn new<D: Into<Diagnostic>>(source_manager: SourceManager, diagnostic: D) -> Self {
         NATIVE_CALL_KIND_ID.init();
-        
+
         Self {
             source_manager,
             cursor: 0,
@@ -249,18 +253,18 @@ impl Lexer {
 
     fn lex_identifier_helper(
         &mut self,
+        matcher: &LexerEbnfParserMatcher,
         span: Span,
         kind: TokenKind,
         tokens: &mut Vec<Token>,
-        should_parse_nested_operator: bool
+        should_parse_nested_operator: bool,
     ) {
-
         if !should_parse_nested_operator {
-            return
+            return;
         }
 
         if kind == TokenKind::KwOperator {
-            let new_tokens = self.lex_custom_operator(span);
+            let new_tokens = self.lex_custom_operator(matcher, span);
             tokens.extend(new_tokens);
         } else if kind == TokenKind::KwKeyword {
             let new_tokens = self.lex_custom_keyword(span);
@@ -284,14 +288,15 @@ impl Lexer {
             ebnf::native_call::LexerNativeCallKind::Identifier,
             &self.source_manager.get_source()[self.cursor..],
             RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
-            &self.diagnostics, None
+            &self.diagnostics,
+            None,
         ) {
             let end = self.cursor + slice.len();
             let span = Span::from_usize(self.cursor, end);
             tokens.push(Token::new(TokenKind::Identifier, span));
             self.cursor = end;
             let kind: TokenKind = slice.into();
-            self.lex_identifier_helper(span, kind, tokens, should_parse_nested_operator);
+            self.lex_identifier_helper(matcher, span, kind, tokens, should_parse_nested_operator);
         }
     }
 
@@ -300,7 +305,8 @@ impl Lexer {
             ebnf::native_call::LexerNativeCallKind::Operator,
             &self.source_manager.get_source()[self.cursor..],
             RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
-            &mut self.diagnostics, None
+            &mut self.diagnostics,
+            None,
         ) {
             let end = self.cursor + slice.len();
             let span = Span::from_usize(self.cursor, end);
@@ -323,7 +329,8 @@ impl Lexer {
             ebnf::native_call::LexerNativeCallKind::Number,
             &self.source_manager.get_source()[self.cursor..],
             RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
-            &mut self.diagnostics, None
+            &mut self.diagnostics,
+            None,
         );
 
         if let Some((bytes, k)) = temp {
@@ -779,13 +786,13 @@ impl Lexer {
     fn try_lex_using_custom_matcher(
         &mut self,
         tokens: &mut Vec<Token>,
-        name: UniqueString
+        name: UniqueString,
     ) -> bool {
         if !self.block_lexer_matcher.contains_key(&name) {
             let code_span = self.skip_while_code_block_end(self.cursor);
             self.cursor = code_span.end as usize + 3;
             tokens.push(Token::new(TokenKind::CustomCodeBlock(name), code_span));
-            return false
+            return false;
         }
 
         let code_start = self.cursor;
@@ -848,7 +855,6 @@ impl Lexer {
                     )
                     .commit();
             }
-
         } else {
             code_end_span.start = self.cursor as u32;
             self.cursor += 3;
@@ -1053,7 +1059,7 @@ impl Lexer {
 
         let quote_span = Span::from_usize(self.cursor, self.cursor + 3);
         self.cursor += 3;
-        
+
         if !self.is_start_of_identifier(matcher) {
             let dummy = (TokenKind::Unknown, Span::from_usize(0, 0));
             let last = self.paren_balance.last().unwrap_or(&dummy).clone();
@@ -1079,7 +1085,8 @@ impl Lexer {
                 if to_be_remove_index != -1 {
                     self.paren_balance.remove(to_be_remove_index as usize);
                 } else {
-                    self.paren_balance.push((TokenKind::TripleBackTick, quote_span));
+                    self.paren_balance
+                        .push((TokenKind::TripleBackTick, quote_span));
                 }
             }
 
@@ -1189,7 +1196,7 @@ impl Lexer {
         }
     }
 
-    fn is_start_of_identifier(&mut self, matcher: &LexerEbnfParserMatcher) -> bool {
+    fn is_start_of_identifier(&self, matcher: &LexerEbnfParserMatcher) -> bool {
         // println!("str: {:?}", std::str::from_utf8(&self.source_manager.get_source()[self.cursor..]);
         matcher
             .match_native(
@@ -1197,32 +1204,82 @@ impl Lexer {
                 &self.source_manager.get_source()[self.cursor..],
                 RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
                 &self.diagnostics,
-                None
+                None,
             )
             .is_some()
     }
 
-    fn is_valid_digit(&mut self, matcher: &LexerEbnfParserMatcher) -> bool {
+    fn is_valid_digit(&self, matcher: &LexerEbnfParserMatcher) -> bool {
         // println!("temp: {:?} | {:?}", 3, std::str::from_utf8(&self.source_manager.get_source()[self.cursor..]));
-        let temp = matcher
-            .match_native(
-                ebnf::native_call::LexerNativeCallKind::Digit,
-                &self.source_manager.get_source()[self.cursor..],
-                RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
-                &self.diagnostics,
-                None
-            );
+        let temp = matcher.match_native(
+            ebnf::native_call::LexerNativeCallKind::Digit,
+            &self.source_manager.get_source()[self.cursor..],
+            RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+            &self.diagnostics,
+            None,
+        );
         temp.is_some()
     }
 
-    fn is_valid_operator_start(&mut self, matcher: &LexerEbnfParserMatcher) -> bool {
+    fn is_valid_custom_operator_start(&self, matcher: &LexerEbnfParserMatcher) -> bool {
+        match self.peek_char() {
+            Some('[') | Some('_') => return true,
+            _ => {}
+        }
+
+        self.is_valid_operator_start(matcher) || self.is_start_of_identifier(matcher)
+    }
+
+    fn lex_custom_operator_continue(&self, matcher: &LexerEbnfParserMatcher) -> Option<&[u8]> {
+        match self.peek_char() {
+            Some(']') | Some('_') => {
+                return Some(&self.source_manager.get_source()[self.cursor..(self.cursor + 1)])
+            }
+            _ => {}
+        }
+
+        if let Some((s, _)) = matcher.match_native(
+            ebnf::native_call::LexerNativeCallKind::ContIdentifier,
+            &self.source_manager.get_source()[self.cursor..],
+            RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+            &self.diagnostics,
+            None,
+        ) {
+            return Some(s);
+        }
+
+        if let Some((s, _)) = matcher.match_native(
+            ebnf::native_call::LexerNativeCallKind::ContOperator,
+            &self.source_manager.get_source()[self.cursor..],
+            RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+            &self.diagnostics,
+            None,
+        ) {
+            return Some(s);
+        }
+        None
+    }
+
+    fn is_valid_operator_start(&self, matcher: &LexerEbnfParserMatcher) -> bool {
         matcher
             .match_native(
                 ebnf::native_call::LexerNativeCallKind::StartOperator,
                 &self.source_manager.get_source()[self.cursor..],
                 RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
                 &self.diagnostics,
-                None
+                None,
+            )
+            .is_some()
+    }
+
+    fn is_valid_whitespace(&self, matcher: &LexerEbnfParserMatcher) -> bool {
+        matcher
+            .match_native(
+                ebnf::native_call::LexerNativeCallKind::Whitespace,
+                &self.source_manager.get_source()[self.cursor..],
+                RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+                &self.diagnostics,
+                None,
             )
             .is_some()
     }
@@ -1305,34 +1362,38 @@ impl Lexer {
                     &self.source_manager.get_source()[self.cursor..],
                     RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
                     &self.diagnostics,
-                    None
+                    None,
                 );
 
                 if let Some((span, kind)) = temp_matched {
                     if kind == TokenKind::Identifier {
                         let slice = &self.source_manager[span];
                         let kind: TokenKind = slice.into();
-                        self.lex_identifier_helper(span, kind, &mut tokens, true);
+                        self.lex_identifier_helper(matcher, span, kind, &mut tokens, true);
                     }
                     tokens.push(Token::new(kind, span));
                     self.cursor += span.len();
                     last_cursor = Some(self.cursor);
                     is_shebang_valid = false;
                     continue;
-                } 
-                
+                }
+
                 if matcher.is_scoped() {
                     self.diagnostics
                         .builder()
                         .report(
                             DiagnosticLevel::Error,
                             "Invalid token",
-                            self.source_manager.get_source_info(Span::from_usize(self.cursor, self.cursor + 1)),
-                            None
+                            self.source_manager
+                                .get_source_info(Span::from_usize(self.cursor, self.cursor + 1)),
+                            None,
                         )
                         .add_error(
                             "Invalid token",
-                            Some(self.source_manager.fix_span(Span::from_usize(self.cursor, self.cursor + 1)))
+                            Some(
+                                self.source_manager
+                                    .fix_span(Span::from_usize(self.cursor, self.cursor + 1)),
+                            ),
                         )
                         .commit();
                     break;
@@ -1350,7 +1411,7 @@ impl Lexer {
                         &self.source_manager.get_source()[self.cursor..],
                         RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
                         &self.diagnostics,
-                        None
+                        None,
                     )
                     .is_some();
                 if is_valid {
@@ -1585,7 +1646,7 @@ impl Lexer {
                         source,
                         relative_manager,
                         &self.diagnostics,
-                        None
+                        None,
                     ) {
                         let end = start + s.len();
                         let span = Span::from_usize(start, end);
@@ -1615,7 +1676,7 @@ impl Lexer {
                         source,
                         RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
                         &self.diagnostics,
-                        None
+                        None,
                     );
                     if let Some((id, _)) = id {
                         let end = self.cursor + id.len();
@@ -1989,7 +2050,151 @@ impl Lexer {
         (valid_kw, len)
     }
 
-    fn lex_custom_operator(&mut self, operator_span: Span) -> Vec<Token> {
+    fn lex_custom_operator_helper(
+        &mut self,
+        matcher: &LexerEbnfParserMatcher,
+        tokens: &mut Vec<Token>,
+        operator_span: Span,
+    ) -> bool {
+        let start = self.cursor;
+        self.next_char();
+        let mut span = Span::from_usize(start, start);
+        loop {
+            let is_valid_operator_continuation_code_point =
+                self.lex_custom_operator_continue(matcher);
+            if let Some(s) = is_valid_operator_continuation_code_point {
+                self.cursor += s.len();
+                continue;
+            }
+
+            let is_valid_space = matcher.match_native(
+                ebnf::native_call::LexerNativeCallKind::Whitespace,
+                self.source_manager.get_source()[self.cursor..].as_ref(),
+                RelativeSourceManager::new(&self.source_manager, self.cursor as u32),
+                &self.diagnostics,
+                None,
+            );
+
+            if let Some((s, _)) = is_valid_space {
+                self.cursor += s.len();
+                continue;
+            }
+
+            break;
+        }
+        span.end = self.cursor as u32;
+        span = span.trim(&self.source_manager);
+        tokens.push(Token::new(TokenKind::Operator, span));
+
+        if span.is_empty() {
+            self.diagnostics
+                .builder()
+                .report(
+                    DiagnosticLevel::Error,
+                    "Expecting an operator after 'operator'",
+                    self.source_manager.get_source_info(operator_span),
+                    None,
+                )
+                .commit();
+            return false;
+        }
+        let slice = &self.source_manager[span];
+        let mut underscore: [Span; 3] = [Span::default(); 3];
+
+        let underscores_count = slice.iter().filter(|c| **c == b'_').count();
+        if underscores_count > 2 {
+            let info = self.source_manager.get_source_info(span);
+            self.diagnostics
+                .builder()
+                .report(DiagnosticLevel::Error, "Invalid operator", info, None)
+                .add_error(
+                    "Max two underscores are allowed",
+                    Some(self.source_manager.fix_span(span)),
+                )
+                .commit();
+            return false;
+        }
+
+        let slice_iter = slice
+            .iter()
+            .filter(|c| !c.is_ascii_whitespace())
+            .enumerate();
+        let slice_len = slice_iter.clone().count();
+
+        if slice_len == underscores_count {
+            let info = self.source_manager.get_source_info(span);
+            self.diagnostics
+                .builder()
+                .report(DiagnosticLevel::Error, "Invalid operator", info, None)
+                .add_error(
+                    "Operator cannot be empty",
+                    Some(self.source_manager.fix_span(span)),
+                )
+                .commit();
+            return false;
+        }
+
+        for (index, byte) in slice_iter {
+            if *byte == b'_' {
+                if index == 0 {
+                    underscore[0] = Span::from_usize(start + index, start + index + 1);
+                } else if index == slice_len - 1 {
+                    underscore[2] = Span::from_usize(start + index, start + index + 1);
+                } else {
+                    underscore[1] = Span::from_usize(start + index, start + index + 1);
+                }
+            }
+        }
+
+        let is_start = !underscore[0].is_empty();
+        let is_middle = !underscore[1].is_empty();
+        let is_end = !underscore[2].is_empty();
+
+        if is_middle {
+            let mid_span = underscore[1];
+            let left_span = Span::new(span.start, mid_span.start).trim(&self.source_manager);
+            let right_span = Span::new(mid_span.end, span.end).trim(&self.source_manager);
+            let op = CustomOperator::Compound {
+                open: Identifier::new(left_span),
+                close: Identifier::new(right_span),
+                span: span.trim(&self.source_manager),
+            };
+            self.custom_operators.push(op);
+        } else if is_start && is_end {
+            let op_span =
+                Span::new(underscore[0].end, underscore[2].start).trim(&self.source_manager);
+            let op = CustomOperator::Infix(Identifier::new(op_span));
+            self.custom_operators.push(op);
+        } else if is_start {
+            let op_span = Span::new(underscore[0].end, (start + slice.len()) as u32)
+                .trim(&self.source_manager);
+            let op = CustomOperator::Prefix(Identifier::new(op_span));
+            self.custom_operators.push(op);
+        } else if is_end {
+            let op_span = Span::new(start as u32, underscore[2].start).trim(&self.source_manager);
+            let op = CustomOperator::Postfix(Identifier::new(op_span));
+            self.custom_operators.push(op);
+        } else {
+            let span = span.trim(&self.source_manager);
+            let op = CustomOperator::Unknown(Identifier::new(span));
+            self.custom_operators.push(op);
+        }
+
+        if let Some(last) = self.custom_operators.last() {
+            self.custom_operators_trie.insert(
+                last.to_str(&self.source_manager).as_bytes(),
+                self.custom_operators.len() - 1,
+            );
+        }
+
+        return true;
+    }
+
+    fn lex_custom_operator(
+        &mut self,
+        matcher: &LexerEbnfParserMatcher,
+        operator_span: Span,
+    ) -> Vec<Token> {
         let mut tokens: Vec<Token> = Vec::new();
         let mut operator_found = false;
 
@@ -2039,122 +2244,10 @@ impl Lexer {
                     self.next_char();
                     break;
                 }
-                _ if is_valid_operator_start_code_point(ch) => {
-                    let start = self.cursor;
-                    self.next_char();
-                    let mut span = self.skip_while(|c| {
-                        is_valid_operator_continuation_code_point(c) || c.is_ascii_whitespace()
-                    });
-                    span.start = start as u32;
-                    span = span.trim(&self.source_manager);
-
-                    if span.is_empty() {
-                        self.diagnostics
-                            .builder()
-                            .report(
-                                DiagnosticLevel::Error,
-                                "Expecting an operator after 'operator'",
-                                self.source_manager.get_source_info(operator_span),
-                                None,
-                            )
-                            .commit();
-                        break;
-                    }
-                    let slice = &self.source_manager[span];
-                    let mut underscore: [Span; 3] = [Span::default(); 3];
-
-                    let underscores_count = slice.iter().filter(|c| **c == b'_').count();
-                    if underscores_count > 2 {
-                        let info = self.source_manager.get_source_info(span);
-                        self.diagnostics
-                            .builder()
-                            .report(DiagnosticLevel::Error, "Invalid operator", info, None)
-                            .add_error(
-                                "Max two underscores are allowed",
-                                Some(self.source_manager.fix_span(span)),
-                            )
-                            .commit();
-                        break;
-                    }
-
-                    let slice_iter = slice
-                        .iter()
-                        .filter(|c| !c.is_ascii_whitespace())
-                        .enumerate();
-                    let slice_len = slice_iter.clone().count();
-
-                    if slice_len == underscores_count {
-                        let info = self.source_manager.get_source_info(span);
-                        self.diagnostics
-                            .builder()
-                            .report(DiagnosticLevel::Error, "Invalid operator", info, None)
-                            .add_error(
-                                "Operator cannot be empty",
-                                Some(self.source_manager.fix_span(span)),
-                            )
-                            .commit();
-                        break;
-                    }
-
-                    for (index, byte) in slice_iter {
-                        if *byte == b'_' {
-                            if index == 0 {
-                                underscore[0] = Span::from_usize(start + index, start + index + 1);
-                            } else if index == slice_len - 1 {
-                                underscore[2] = Span::from_usize(start + index, start + index + 1);
-                            } else {
-                                underscore[1] = Span::from_usize(start + index, start + index + 1);
-                            }
-                        }
-                    }
-
-                    let is_start = !underscore[0].is_empty();
-                    let is_middle = !underscore[1].is_empty();
-                    let is_end = !underscore[2].is_empty();
-
-                    if is_middle {
-                        let mid_span = underscore[1];
-                        let left_span =
-                            Span::new(span.start, mid_span.start).trim(&self.source_manager);
-                        let right_span =
-                            Span::new(mid_span.end, span.end).trim(&self.source_manager);
-                        let op = CustomOperator::Compound {
-                            open: Identifier::new(left_span),
-                            close: Identifier::new(right_span),
-                            span: span.trim(&self.source_manager),
-                        };
-                        self.custom_operators.push(op);
-                    } else if is_start && is_end {
-                        let op_span = Span::new(underscore[0].end, underscore[2].start)
-                            .trim(&self.source_manager);
-                        let op = CustomOperator::Infix(Identifier::new(op_span));
-                        self.custom_operators.push(op);
-                    } else if is_start {
-                        let op_span = Span::new(underscore[0].end, (start + slice.len()) as u32)
-                            .trim(&self.source_manager);
-                        let op = CustomOperator::Prefix(Identifier::new(op_span));
-                        self.custom_operators.push(op);
-                    } else if is_end {
-                        let op_span =
-                            Span::new(start as u32, underscore[2].start).trim(&self.source_manager);
-                        let op = CustomOperator::Postfix(Identifier::new(op_span));
-                        self.custom_operators.push(op);
-                    } else {
-                        let span = span.trim(&self.source_manager);
-                        let op = CustomOperator::Unknown(Identifier::new(span));
-                        self.custom_operators.push(op);
-                    }
-
-                    if let Some(last) = self.custom_operators.last() {
-                        self.custom_operators_trie.insert(
-                            last.to_str(&self.source_manager).as_bytes(),
-                            self.custom_operators.len() - 1,
-                        );
-                    }
-
-                    operator_found = true;
+                _ if self.is_valid_custom_operator_start(matcher) => {
+                    operator_found =
+                        self.lex_custom_operator_helper(matcher, &mut tokens, operator_span);
                 }
-
                 _ => {
                     break;
                 }

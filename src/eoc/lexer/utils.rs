@@ -185,11 +185,3 @@ impl CustomOperator {
         }
     }
 }
-
-pub(crate) fn is_valid_operator_start_code_point(ch: char) -> bool {
-    Identifier::is_operator_start_code_point(ch) || is_valid_identifier_start_code_point(ch) || ch == '[' || ch == '_'
-}
-
-pub(crate) fn is_valid_operator_continuation_code_point(ch: char) -> bool {
-    Identifier::is_operator_continuation_code_point(ch) || is_valid_identifier_continuation_code_point(ch) || ch == ']' || ch == '_'
-}
