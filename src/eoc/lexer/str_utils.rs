@@ -131,6 +131,10 @@ impl<'a> ByteToCharIter<'a> {
     pub(crate) fn offset(&self) -> usize {
         return self.1;
     }
+
+    pub(crate) fn set_offset(&mut self, offset: usize) {
+        self.1 = offset;
+    }
 }
 
 impl<'a> Iterator for ByteToCharIter<'a> {
