@@ -9,6 +9,12 @@ pub(crate) struct Trie<T: Eq + Hash + Copy, U> {
     value: Option<U>,
 }
 
+impl<T: Eq + Hash + Copy, U> Default for Trie<T, U> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Eq + Hash + Copy, U> Trie<T, U> {
     pub(crate) fn new() -> Self {
         Trie {
