@@ -1,10 +1,9 @@
 use crate::eoc::{
     lexer::token::TokenKind,
-    utils::{diagnostic::Diagnostic, imm_ref::Ref},
+    utils::{diagnostic::Diagnostic, imm_ref::Ref, source_manager::RelativeSourceManager},
 };
 
 use super::{
-    ast::RelativeSourceManager,
     basic::{
         EbnfParserMatcher, EbnfParserMatcherInner, LexerEbnfMatcher, LexerEbnfParserMatcherInner,
         LexerMatchResult,

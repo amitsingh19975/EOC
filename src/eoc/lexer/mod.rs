@@ -4,7 +4,7 @@ use crate::eoc::lexer::ebnf::ast::EbnfParser;
 
 use self::{
     ebnf::{
-        ast::{EbnfParserMode, RelativeSourceManager},
+        ast::EbnfParserMode,
         basic::LexerEbnfMatcher,
         ir_matcher::IRLexerEbnfParserMatcher,
         lexer::EbnfLexer,
@@ -12,7 +12,7 @@ use self::{
         vm::LexerEbnfParserMatcher,
     }, token::{Token, TokenKind}, utils::{
         is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point,
-        CustomOperator, ParenMatching,
+        CustomOperator, ParenMatching, ParenStack,
     }
 };
 use super::{
@@ -21,7 +21,7 @@ use super::{
     utils::{
         diagnostic::{Diagnostic, DiagnosticLevel},
         imm_ref::Ref,
-        source_manager::SourceManager,
+        source_manager::{RelativeSourceManager, SourceManager},
         span::Span,
         string::UniqueString,
         trie::Trie,
@@ -53,7 +53,7 @@ impl LexerMode {
 pub(crate) struct Lexer {
     source_manager: SourceManager,
     cursor: usize,
-    paren_balance: Vec<(TokenKind, Span)>,
+    paren_balance: ParenStack,
     diagnostics: Diagnostic,
     custom_operators: Vec<CustomOperator>,
     custom_keywords: Vec<Identifier>,
@@ -74,17 +74,17 @@ impl Lexer {
         Self {
             source_manager,
             cursor: 0,
-            paren_balance: Vec::new(),
+            paren_balance: Default::default(),
             diagnostics: diagnostic.into(),
-            custom_operators: Vec::new(),
-            custom_keywords: Vec::new(),
-            rewind_stack: Vec::new(),
-            custom_operators_trie: Trie::new(),
-            custom_keywords_trie: Trie::new(),
-            block_lexer_matcher: HashMap::new(),
+            custom_operators: Default::default(),
+            custom_keywords: Default::default(),
+            rewind_stack: Default::default(),
+            custom_operators_trie: Default::default(),
+            custom_keywords_trie: Default::default(),
+            block_lexer_matcher: Default::default(),
             mode: LexerMode::Normal,
-            shebang_span: Span::default(),
-            block_parser_matcher: HashMap::new(),
+            shebang_span: Default::default(),
+            block_parser_matcher: Default::default(),
             global_parser_matcher: ParserEbnfParserMatcher::default().into(),
         }
     }
@@ -179,37 +179,6 @@ impl Lexer {
         } else {
             Some(temp)
         }
-    }
-
-    fn check_balanced_paren(&mut self, until_chars: &[char]) {
-        for (token, span) in self.paren_balance.iter().rev() {
-            if until_chars.contains(&ParenMatching::to_str(*token).chars().next().unwrap()) {
-                continue;
-            }
-
-            let other_kind = ParenMatching::get_other_pair(*token).unwrap_or(TokenKind::Unknown);
-            if until_chars.contains(&ParenMatching::to_str(other_kind).chars().next().unwrap()) {
-                continue;
-            }
-
-            let token_name = ParenMatching::get_token_name(*token);
-
-            self.diagnostics
-                .builder()
-                .report(
-                    DiagnosticLevel::Error,
-                    format!("Unmatched {token_name}"),
-                    self.source_manager.get_source_info(*span),
-                    None,
-                )
-                .add_error(
-                    format!("Remove or add matching {token_name}"),
-                    Some(self.source_manager.fix_span(*span)),
-                )
-                .commit();
-        }
-
-        self.paren_balance.clear();
     }
 
     pub(crate) fn get_custom_operators(&self) -> &Vec<CustomOperator> {
@@ -398,8 +367,7 @@ impl Lexer {
 
                 let old_parens = self.paren_balance.clone();
                 self.paren_balance.clear();
-                self.paren_balance
-                    .push((TokenKind::OpenBrace, Span::from_usize(end, end + 1)));
+                self.paren_balance.push(TokenKind::OpenBrace, Span::from_usize(end, end + 1));
                 let mut has_error = false;
 
                 {
@@ -1084,7 +1052,7 @@ impl Lexer {
                     self.paren_balance.remove(to_be_remove_index as usize);
                 } else {
                     self.paren_balance
-                        .push((TokenKind::TripleBackTick, quote_span));
+                        .push(TokenKind::TripleBackTick, quote_span);
                 }
             }
 
@@ -1116,82 +1084,8 @@ impl Lexer {
     }
 
     fn expect_block_or_paren(&mut self, kind: TokenKind) {
-        let token_name = ParenMatching::get_token_name(kind);
-        let other_paren = ParenMatching::get_other_pair(kind);
-
-        if let Some((paren, span)) = self.paren_balance.last() {
-            let paren_str = ParenMatching::to_string(kind);
-            let other_paren_str =
-                ParenMatching::to_string(other_paren.unwrap_or(TokenKind::Unknown));
-
-            if Some(*paren) != other_paren {
-                let info = self
-                    .source_manager
-                    .get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
-                self.diagnostics
-                    .builder()
-                    .report(
-                        DiagnosticLevel::Error,
-                        format!("Unmatched {token_name} '{paren_str}'"),
-                        info,
-                        None,
-                    )
-                    .add_error(
-                        format!("Add a matching pair '{other_paren_str}'"),
-                        Some(
-                            self.source_manager
-                                .fix_span(Span::from_usize(self.cursor, self.cursor + 1)),
-                        ),
-                    )
-                    .commit();
-
-                let token_name = ParenMatching::get_token_name(*paren);
-                let info = self.source_manager.get_source_info(*span);
-                self.diagnostics
-                    .builder()
-                    .report(
-                        DiagnosticLevel::Info,
-                        format!("Change or close the last opened {token_name}"),
-                        info,
-                        None,
-                    )
-                    .add_warning(
-                        format!(
-                            "Last opened {token_name} '{}'",
-                            ParenMatching::to_string(*paren)
-                        ),
-                        Some(self.source_manager.fix_span(*span)),
-                    )
-                    .commit();
-                return;
-            }
-
-            self.paren_balance.pop();
-        } else {
-            let info = self
-                .source_manager
-                .get_source_info(Span::from_usize(self.cursor, self.cursor + 1));
-            let paren = ParenMatching::to_string(kind);
-            let other_paren = ParenMatching::to_string(
-                ParenMatching::get_other_pair(kind).unwrap_or(TokenKind::Unknown),
-            );
-            self.diagnostics
-                .builder()
-                .report(
-                    DiagnosticLevel::Error,
-                    format!("Unmatched {token_name} '{paren}'"),
-                    info,
-                    None,
-                )
-                .add_error(
-                    format!("Add a matching pair '{other_paren}'"),
-                    Some(
-                        self.source_manager
-                            .fix_span(Span::from_usize(self.cursor, self.cursor + 1)),
-                    ),
-                )
-                .commit();
-        }
+        let current_span = Span::from_usize(self.cursor, self.cursor + 1);
+        self.paren_balance.expect(kind, current_span, &self.source_manager, &self.diagnostics)
     }
 
     fn is_start_of_identifier(&self, matcher: &LexerEbnfParserMatcher) -> bool {
@@ -1366,8 +1260,7 @@ impl Lexer {
 
                 if let Some((span, kind)) = temp_matched {
                     if kind == TokenKind::Identifier {
-                        let slice = &self.source_manager[span];
-                        let kind: TokenKind = slice.into();
+                        let kind: TokenKind = self.source_manager[span].into();
                         self.lex_identifier_helper(matcher, span, kind, &mut tokens, true);
                     }
                     tokens.push(Token::new(kind, span));
@@ -1465,7 +1358,7 @@ impl Lexer {
                 }
                 '(' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
-                    self.paren_balance.push((TokenKind::OpenParen, span));
+                    self.paren_balance.push(TokenKind::OpenParen, span);
                     tokens.push(Token::new(TokenKind::OpenParen, span));
                     self.next_char();
                 }
@@ -1486,10 +1379,10 @@ impl Lexer {
                     let span = Span::from_usize(start, end);
                     let len = span.len();
                     if len == 2 {
-                        self.paren_balance.push((TokenKind::OpenDoubleBrace, span));
+                        self.paren_balance.push(TokenKind::OpenDoubleBrace, span);
                         tokens.push(Token::new(TokenKind::OpenDoubleBrace, span));
                     } else {
-                        self.paren_balance.push((TokenKind::OpenBrace, span));
+                        self.paren_balance.push(TokenKind::OpenBrace, span);
                         tokens.push(Token::new(TokenKind::OpenBrace, span));
                     }
                 }
@@ -1513,7 +1406,7 @@ impl Lexer {
                 }
                 '[' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
-                    self.paren_balance.push((TokenKind::OpenBracket, span));
+                    self.paren_balance.push(TokenKind::OpenBracket, span);
                     tokens.push(Token::new(TokenKind::OpenBracket, span));
                     self.next_char();
                 }
@@ -1589,7 +1482,7 @@ impl Lexer {
                     }
                 }
                 _ => {
-                    self.check_balanced_paren(&until);
+                    self.paren_balance.check_balanced(&until, &self.source_manager, &self.diagnostics);
                     tokens
                         .iter()
                         .for_each(|token| println!("{}", token.to_string(&self.source_manager)));
@@ -1604,7 +1497,7 @@ impl Lexer {
         }
 
         if should_check_paren {
-            self.check_balanced_paren(&until);
+            self.paren_balance.check_balanced(&until, &self.source_manager, &self.diagnostics);
         }
 
         tokens
@@ -1706,7 +1599,7 @@ impl Lexer {
                 }
                 '(' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
-                    self.paren_balance.push((TokenKind::OpenParen, span));
+                    self.paren_balance.push(TokenKind::OpenParen, span);
                     tokens.push(Token::new(TokenKind::OpenParen, span));
                     self.next_char();
                 }
@@ -1718,7 +1611,7 @@ impl Lexer {
                 }
                 '{' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
-                    self.paren_balance.push((TokenKind::OpenBrace, span));
+                    self.paren_balance.push(TokenKind::OpenBrace, span);
                     tokens.push(Token::new(TokenKind::OpenBrace, span));
                     self.next_char();
                 }
@@ -1737,66 +1630,25 @@ impl Lexer {
                     tokens.push(Token::new(TokenKind::Colon, span));
                 }
                 '<' => {
-                    let span = Span::from_usize(self.cursor, self.cursor + 1);
-                    tokens.push(Token::new(TokenKind::OpenAngle, span));
-                    self.next_char();
-                    let mut level = 1;
-                    let mut span = Span::from_usize(self.cursor, self.cursor + 1);
-                    let mut last_open_angle = self.cursor;
-                    while level > 0 {
-                        let Some(ch) = self.peek_char() else {
-                            let temp_span = Span::from_usize(last_open_angle, last_open_angle + 1);
-                            let info = self.source_manager.get_source_info(temp_span);
-                            let content_span = Span::from_usize(last_open_angle + 1, self.cursor);
-                            self.diagnostics
-                                .builder()
-                                .report(
-                                    DiagnosticLevel::Error,
-                                    "Unterminated angle bracket",
-                                    info,
-                                    None,
-                                )
-                                .add_error(
-                                    "Try add a matching '>' to close the angle bracket",
-                                    Some(self.source_manager.fix_span(content_span)),
-                                )
-                                .commit();
-                            break;
-                        };
-
-                        if ch == '<' {
-                            last_open_angle = self.cursor;
-                            level += 1;
-                        } else if ch == '>' {
-                            level -= 1;
-                        }
-                        self.next_char();
-                        span.end = self.cursor as u32;
-                    }
-
-                    if level == 0 {
-                        span.end -= 1;
-                    }
-
-                    tokens.push(Token::new(TokenKind::AngleContent, span));
-                    if level == 0 {
-                        let span = Span::new(span.end, span.end + 1);
-                        tokens.push(Token::new(TokenKind::CloseAngle, span));
-                    }
+                    let temp_tokens = matcher.as_ir().lex_type_content(&mut self.cursor, &self.source_manager, &self.diagnostics);
+                    tokens.extend(temp_tokens);
                 }
                 '>' => {
-                    let span = Span::from_usize(self.cursor, self.cursor + 1);
                     self.diagnostics
                         .builder()
                         .report(
                             DiagnosticLevel::Error,
-                            "misplaced '>'",
-                            self.source_manager.get_source_info(span),
+                            "Found dangling '>'",
+                            self.source_manager
+                                .get_source_info(Span::from_usize(self.cursor, self.cursor + 1)),
                             None,
                         )
                         .add_error(
-                            "try remove the this",
-                            Some(self.source_manager.fix_span(span)),
+                            "Expected '<' to start a type",
+                            Some(
+                                self.source_manager
+                                    .fix_span(Span::from_usize(self.cursor, self.cursor + 1)),
+                            ),
                         )
                         .commit();
                     self.next_char();
@@ -1900,7 +1752,7 @@ impl Lexer {
                 }
                 '[' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
-                    self.paren_balance.push((TokenKind::OpenBracket, span));
+                    self.paren_balance.push(TokenKind::OpenBracket, span);
                     tokens.push(Token::new(TokenKind::OpenBracket, span));
                     self.next_char();
                 }
@@ -1964,7 +1816,7 @@ impl Lexer {
                     self.next_char();
                 }
                 _ => {
-                    self.check_balanced_paren(&[]);
+                    self.paren_balance.check_balanced(&[], &self.source_manager, &self.diagnostics);
                     tokens
                         .iter()
                         .for_each(|token| println!("{}", token.to_string(&self.source_manager)));
@@ -1983,7 +1835,7 @@ impl Lexer {
                 Span::from_usize(self.cursor, self.cursor),
             ));
         }
-        self.check_balanced_paren(&[]);
+        self.paren_balance.check_balanced(&[], &self.source_manager, &self.diagnostics);
         self.paren_balance = old_parens;
         tokens
     }
@@ -2246,7 +2098,7 @@ impl Lexer {
             match ch {
                 '(' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
-                    self.paren_balance.push((TokenKind::OpenParen, span));
+                    self.paren_balance.push(TokenKind::OpenParen, span);
                     tokens.push(Token::new(TokenKind::OpenParen, span));
                     self.next_char();
 
@@ -2372,7 +2224,7 @@ impl Lexer {
                 }
                 '(' => {
                     let span = Span::from_usize(self.cursor, self.cursor + 1);
-                    self.paren_balance.push((TokenKind::OpenParen, span));
+                    self.paren_balance.push(TokenKind::OpenParen, span);
                     tokens.push(Token::new(TokenKind::OpenParen, span));
                     self.next_char();
                 }

@@ -1,9 +1,8 @@
 use crate::eoc::utils::{
-    diagnostic::{Diagnostic, DiagnosticLevel},
-    span::Span,
+    diagnostic::{Diagnostic, DiagnosticLevel}, source_manager::RelativeSourceManager, span::Span
 };
 
-use super::{ebnf::ast::RelativeSourceManager, str_utils::ByteToCharIter};
+use super::str_utils::ByteToCharIter;
 
 pub(crate) fn parse_integer<'b, D, H, O, B>(
     s: &'b [u8],

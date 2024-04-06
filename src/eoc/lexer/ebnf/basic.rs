@@ -7,15 +7,11 @@ use crate::eoc::{
         token::TokenKind,
     },
     utils::{
-        diagnostic::Diagnostic,
-        imm_ref::{ImmRef, Ref},
-        span::Span,
-        string::UniqueString,
+        diagnostic::Diagnostic, imm_ref::{ImmRef, Ref}, source_manager::RelativeSourceManager, span::Span, string::UniqueString
     },
 };
 
 use super::{
-    ast::RelativeSourceManager,
     default_matcher::DefaultLexerEbnfParserMatcher,
     ir_matcher::IRLexerEbnfParserMatcher,
     native_call::LexerNativeCallKind,

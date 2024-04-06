@@ -6,11 +6,11 @@ use crate::eoc::{
         str_utils::{get_utf8_char_len, ByteToCharIter},
         token::TokenKind,
     },
-    utils::{diagnostic::Diagnostic, string::UniqueString},
+    utils::{diagnostic::Diagnostic, source_manager::RelativeSourceManager, string::UniqueString},
 };
 
 use super::{
-    ast::RelativeSourceManager, basic::LexerEbnfMatcher,
+    basic::LexerEbnfMatcher,
     default_matcher::DefaultLexerEbnfParserMatcher, ir_matcher::IRLexerEbnfParserMatcher, vm_state::LexerVmState,
 };
 

@@ -6,11 +6,10 @@ use crate::eoc::{
             is_valid_identifier_continuation_code_point, is_valid_identifier_start_code_point,
         },
     },
-    utils::{diagnostic::Diagnostic, span::Span, string::UniqueString},
+    utils::{diagnostic::Diagnostic, source_manager::RelativeSourceManager, span::Span, string::UniqueString},
 };
 
 use super::{
-    ast::RelativeSourceManager,
     basic::{EbnfIdentifierMatcher, EbnfNodeMatcher, LexerEbnfMatcher, LexerMatchResult},
     native_call::{LexerNativeCallKind, NATIVE_CALL_KIND_ID},
     vm::VmNode,

@@ -13,38 +13,13 @@ use crate::eoc::{
     },
     utils::{
         diagnostic::{Diagnostic, DiagnosticLevel},
-        source_manager::{SourceManager, SourceManagerDiagnosticInfo},
+        source_manager::SourceManager,
         span::Span,
         string::UniqueString,
     },
 };
 
 use super::expr::{EbnfExpr, TerminalValue};
-
-#[derive(Clone, Copy)]
-pub(crate) struct RelativeSourceManager<'a>(pub(crate) &'a SourceManager, u32);
-
-impl<'a> RelativeSourceManager<'a> {
-    pub(crate) fn new(source_manager: &'a SourceManager, base_pos: u32) -> Self {
-        Self(source_manager, base_pos)
-    }
-
-    pub(crate) fn get_source_info(&self, span: Span) -> SourceManagerDiagnosticInfo {
-        self.0.get_source_info(self.abs_span(span))
-    }
-
-    pub(crate) fn fix_span(&self, span: Span) -> Span {
-        self.0.fix_span(self.abs_span(span))
-    }
-
-    pub(crate) fn abs_span(&self, span: Span) -> Span {
-        span.relative(self.1)
-    }
-
-    pub(crate) fn shift_relative_pos_by(&self, pos: u32) -> Self {
-        Self(self.0, self.1 + pos)
-    }
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EbnfParserMode {

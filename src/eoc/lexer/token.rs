@@ -108,7 +108,7 @@ pub(crate) enum TokenKind {
     CloseAngle, // >
     IrStart,
     IrEnd,
-    AngleContent,
+    TypeContent,
     ExclamationMark,
     
 

@@ -1,10 +1,9 @@
 use crate::eoc::{
-    lexer::{str_utils::ByteToCharIter, token::TokenKind},
-    utils::{diagnostic::Diagnostic, span::Span, string::UniqueString},
+    lexer::{str_utils::ByteToCharIter, token::{Token, TokenKind}, utils::{ParenMatching, ParenStack}},
+    utils::{diagnostic::{Diagnostic, DiagnosticLevel}, source_manager::{RelativeSourceManager, SourceManager}, span::Span, string::UniqueString},
 };
 
 use super::{
-    ast::RelativeSourceManager,
     basic::{EbnfIdentifierMatcher, EbnfNodeMatcher, LexerEbnfMatcher, LexerMatchResult},
     native_call::LexerNativeCallKind,
     vm::VmNode,
@@ -213,6 +212,153 @@ impl IRLexerEbnfParserMatcher {
             )
             .commit();
         None
+    }
+
+    fn validate_type_content(&self, parens: &Vec<Token>, kind: TokenKind, source_manager: &SourceManager, diagnostic: &Diagnostic) {
+        let other_kind = ParenMatching::get_other_pair(kind).unwrap();
+        let token = parens.last().expect("validate_type_content: last").clone();
+        if token.kind == other_kind {
+            let info = source_manager.get_source_info(token.span);
+            diagnostic
+                .builder()
+                .report(
+                    DiagnosticLevel::Error,
+                    "Empty type content",
+                    info,
+                    None,
+                )
+                .add_error(
+                    "Empty type content",
+                    Some(source_manager.fix_span(token.span)),
+                )
+                .commit();
+        }
+    }
+
+    pub(crate) fn lex_type_content (
+        &self,
+        cursor: &mut usize,
+        source_manager: &SourceManager,
+        diagnostic: &Diagnostic,
+    ) -> Vec<Token> {
+        let mut tokens = Vec::new();
+        let mut current_paren_stack = ParenStack::new();
+
+        let mut temp_cursor = *cursor;
+        let s = source_manager.get_source();
+
+        if s[temp_cursor] != b'<' {
+            return tokens;
+        } else {
+            let span = Span::from_usize(temp_cursor, temp_cursor + 1);
+            current_paren_stack.push(TokenKind::OpenAngle, span);
+            tokens.push(Token::new(TokenKind::OpenAngle, span));
+            temp_cursor += 1;
+        }
+
+        while !current_paren_stack.is_empty() {
+            if temp_cursor >= s.len() {
+                let temp_span = Span::from_usize(temp_cursor - 1, temp_cursor);
+                let info = source_manager.get_source_info(temp_span);
+                diagnostic
+                    .builder()
+                    .report(
+                        DiagnosticLevel::Error,
+                        "Unterminated type content",
+                        info,
+                        None,
+                    )
+                    .add_error(
+                        "Unterminated type content",
+                        Some(source_manager.fix_span(temp_span)),
+                    )
+                    .commit();
+                break;
+            }
+
+            let c = s[temp_cursor];
+
+            {
+                let Some(c) = ByteToCharIter::new(&s[temp_cursor..]).next() else {
+                    break;
+                };
+
+                if c.is_whitespace() {
+                    temp_cursor += c.len_utf8();
+                    continue;
+                }
+            }
+
+            match c {
+                b'<' => {
+                    let span = source_manager.make_span(temp_cursor, temp_cursor + 1);
+                    current_paren_stack.push(TokenKind::OpenAngle, span);
+                    tokens.push(Token::new(TokenKind::OpenAngle, span));
+                }
+                b'>' => {
+                    self.validate_type_content(&tokens, TokenKind::CloseAngle, source_manager, diagnostic);
+                    let span = source_manager.make_span(temp_cursor, temp_cursor + 1);
+                    current_paren_stack.expect(TokenKind::CloseAngle, span, source_manager.into(), diagnostic);
+                    tokens.push(Token::new(TokenKind::CloseAngle, span));
+                }
+                b'(' => {
+                    let span = source_manager.make_span(temp_cursor, temp_cursor + 1);
+                    current_paren_stack.push(TokenKind::OpenParen, span);
+                    tokens.push(Token::new(TokenKind::OpenParen, span));
+                }
+                b')' => {
+                    self.validate_type_content(&tokens, TokenKind::CloseParen, source_manager, diagnostic);
+                    let span = source_manager.make_span(temp_cursor, temp_cursor + 1);
+                    current_paren_stack.expect(TokenKind::CloseParen, span, source_manager.into(), diagnostic);
+                    tokens.push(Token::new(TokenKind::CloseParen, span));
+                }
+                b'[' => {
+                    let span = source_manager.make_span(temp_cursor, temp_cursor + 1);
+                    current_paren_stack.push(TokenKind::OpenBracket, span);
+                    tokens.push(Token::new(TokenKind::OpenBracket, span));
+                }
+                b']' => {
+                    self.validate_type_content(&tokens, TokenKind::CloseBracket, source_manager, diagnostic);
+                    let span = source_manager.make_span(temp_cursor, temp_cursor + 1);
+                    current_paren_stack.expect(TokenKind::CloseBracket, span, source_manager.into(), diagnostic);
+                    tokens.push(Token::new(TokenKind::CloseBracket, span));
+                }
+                b'{' => {
+                    let span = source_manager.make_span(temp_cursor, temp_cursor + 1);
+                    current_paren_stack.push(TokenKind::OpenBrace, span);
+                    tokens.push(Token::new(TokenKind::OpenBrace, span));
+                }
+                b'}' => {
+                    self.validate_type_content(&tokens, TokenKind::CloseBrace, source_manager, diagnostic);
+                    let span = source_manager.make_span(temp_cursor, temp_cursor + 1);
+                    current_paren_stack.expect(TokenKind::CloseBrace, span, source_manager.into(), diagnostic);
+                    tokens.push(Token::new(TokenKind::CloseBrace, span));
+                }
+                _ => {
+                    // AnyThing except '<', '>', '(', ')', '[', ']', '{', '}', and '\0'
+                    const INVALID_CHARS: &[u8] = &[b'<', b'>', b'(', b')', b'[', b']', b'{', b'}'];
+                    let start = temp_cursor;
+                    while temp_cursor < s.len() {
+                        let c = s[temp_cursor];
+                        if INVALID_CHARS.contains(&c) {
+                            break;
+                        }
+                        temp_cursor += 1;
+                    }
+
+                    let span = source_manager.make_span(start, temp_cursor);
+                    tokens.push(Token::new(TokenKind::TypeContent, span));
+                    temp_cursor -= 1;
+                }
+            }
+
+            temp_cursor += 1;
+            
+        }
+
+        *cursor = temp_cursor;
+        current_paren_stack.check_balanced(&[], source_manager, diagnostic);
+        return tokens;
     }
 }
 

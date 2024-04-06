@@ -9,15 +9,11 @@ use smallvec::SmallVec;
 use crate::eoc::{
     lexer::{str_utils::ByteToCharIter, token::TokenKind},
     utils::{
-        diagnostic::{Diagnostic, DiagnosticBag, DiagnosticLevel},
-        imm_ref::ImmRef,
-        span::Span,
-        string::UniqueString,
+        diagnostic::{Diagnostic, DiagnosticBag, DiagnosticLevel}, imm_ref::ImmRef, source_manager::RelativeSourceManager, span::Span, string::UniqueString
     },
 };
 
 use super::{
-    ast::RelativeSourceManager,
     basic::{
         EbnfIdentifierMatcher, EbnfNodeMatcher, EbnfParserMatcher, EbnfParserMatcherInner,
         LexerEbnfMatcher, LexerMatchResult,
@@ -1018,7 +1014,7 @@ impl LexerEbnfMatcher for LexerVm {
         &self,
         kind: LexerNativeCallKind,
         s: &'b [u8],
-        source_manager: super::ast::RelativeSourceManager<'b>,
+        source_manager: RelativeSourceManager<'b>,
         diagnostic: &crate::eoc::utils::diagnostic::Diagnostic,
         state: Option<&LexerVmState>,
     ) -> Option<(&'b [u8], TokenKind)> {
@@ -1035,7 +1031,7 @@ impl LexerEbnfMatcher for LexerVm {
     fn try_match_expr<'b>(
         &self,
         s: &'b [u8],
-        source_manager: super::ast::RelativeSourceManager<'b>,
+        source_manager: RelativeSourceManager<'b>,
         diagnostic: &crate::eoc::utils::diagnostic::Diagnostic,
         state: Option<&LexerVmState>,
     ) -> LexerMatchResult {
