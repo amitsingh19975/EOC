@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::eoc::{ast::identifier::Identifier, utils::{source_manager, span::Span}};
+use crate::eoc::{ast::identifier::Identifier, utils::{diagnostic::{Diagnostic, DiagnosticLevel}, source_manager::{self, SourceManager}, span::Span}};
 
 use super::token::TokenKind;
 
@@ -183,5 +183,162 @@ impl CustomOperator {
                 format!("Compound('{}' '{}' => '{}')", open.to_str(source_manager), close.to_str(source_manager), id)
             }
         }
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct ParenStack {
+    stack: Vec<(TokenKind, Span)>,
+}
+
+impl Default for ParenStack {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ParenStack {
+    pub(super) fn new() -> Self {
+        Self { stack: Vec::new() }
+    }
+
+    pub(super) fn push(&mut self, token: TokenKind, span: Span) {
+        self.stack.push((token, span));
+    }
+
+    pub(super) fn pop(&mut self) -> Option<(TokenKind, Span)> {
+        self.stack.pop()
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.stack.is_empty()
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.stack.clear()
+    }
+
+    pub(super) fn remove(&mut self, index: usize) -> (TokenKind, Span) {
+        self.stack.remove(index)
+    }
+
+    pub(crate) fn extend(&mut self, other: Self) {
+        self.stack.extend(other.stack)
+    }
+
+    pub(crate) fn last(&self) -> Option<&(TokenKind, Span)> {
+        self.stack.last()
+    }
+
+    pub(crate) fn iter(&self) -> std::slice::Iter<'_, (TokenKind, Span)> {
+        self.stack.iter()
+    }
+
+    pub(super) fn expect(&mut self, kind: TokenKind, current_span: Span, source_manager: &SourceManager, diagnostic: &Diagnostic) {
+        let token_name = ParenMatching::get_token_name(kind);
+        let other_paren = ParenMatching::get_other_pair(kind);
+
+        if let Some((paren, span)) = self.stack.last() {
+            let paren_str = ParenMatching::to_string(kind);
+            let other_paren_str =
+                ParenMatching::to_string(other_paren.unwrap_or(TokenKind::Unknown));
+
+            if Some(*paren) != other_paren {
+                let info = source_manager
+                    .get_source_info(current_span);
+                diagnostic
+                    .builder()
+                    .report(
+                        DiagnosticLevel::Error,
+                        format!("Unmatched {token_name} '{paren_str}'"),
+                        info,
+                        None,
+                    )
+                    .add_error(
+                        format!("Add a matching pair '{other_paren_str}'"),
+                        Some(
+                            source_manager
+                                .fix_span(current_span),
+                        ),
+                    )
+                    .commit();
+
+                let token_name = ParenMatching::get_token_name(*paren);
+                let info = source_manager.get_source_info(*span);
+                diagnostic
+                    .builder()
+                    .report(
+                        DiagnosticLevel::Info,
+                        format!("Change or close the last opened {token_name}"),
+                        info,
+                        None,
+                    )
+                    .add_warning(
+                        format!(
+                            "Last opened {token_name} '{}'",
+                            ParenMatching::to_string(*paren)
+                        ),
+                        Some(source_manager.fix_span(*span)),
+                    )
+                    .commit();
+                return;
+            }
+
+            self.stack.pop();
+        } else {
+            let info = source_manager
+                .get_source_info(current_span);
+            let paren = ParenMatching::to_string(kind);
+            let other_paren = ParenMatching::to_string(
+                ParenMatching::get_other_pair(kind).unwrap_or(TokenKind::Unknown),
+            );
+            diagnostic
+                .builder()
+                .report(
+                    DiagnosticLevel::Error,
+                    format!("Unmatched {token_name} '{paren}'"),
+                    info,
+                    None,
+                )
+                .add_error(
+                    format!("Add a matching pair '{other_paren}'"),
+                    Some(
+                        source_manager
+                            .fix_span(current_span),
+                    ),
+                )
+                .commit();
+        }
+    }
+
+    pub(crate) fn check_balanced(&mut self, until_chars: &[char], source_manager: &SourceManager, diagnostic: &Diagnostic) {
+        for (token, span) in self.stack.iter().rev() {
+            if until_chars.contains(&ParenMatching::to_str(*token).chars().next().unwrap()) {
+                continue;
+            }
+
+            let other_kind = ParenMatching::get_other_pair(*token).unwrap_or(TokenKind::Unknown);
+            if until_chars.contains(&ParenMatching::to_str(other_kind).chars().next().unwrap()) {
+                continue;
+            }
+
+            let token_name = ParenMatching::get_token_name(*token);
+
+            diagnostic
+                .builder()
+                .report(
+                    DiagnosticLevel::Error,
+                    format!("Unmatched {token_name}"),
+                    source_manager.get_source_info(*span),
+                    None,
+                )
+                .add_error(
+                    format!("Remove or add matching {token_name}"),
+                    Some(source_manager.fix_span(*span)),
+                )
+                .commit();
+        }
+
+        self.stack.clear();
     }
 }
