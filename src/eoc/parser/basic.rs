@@ -40,13 +40,13 @@ pub(crate) struct Keyword {
 pub(crate) enum NodeKind {
     IntegerLiteral,
     FloatLiteral,
-    ValueIdentifier, // %value
+    ValueIdentifier, // '%', Identifier
     CaretIdentifier, // '^', (Identifier)
     Operations, // OperationResultList?, (GenericOperation | CustomOperation), TrailingLocation?
     OperationResultList, // OperationResult (',' , OperationResult)*
     OperationResult, // ValueIdentifier, (':', IntegerLiteral)?
     SuccessorList, // '[', Successor (',', Successor)*, ']'
-    Successor, // ValueIdentifier, (':', IntegerLiteral)?
+    Successor, // CaretIdentifier, (':', BlockArgsList)?
     Type, // TypeAlias | DialectType | BuiltInType
     TypeAlias, // '!', Identifier,
     TypeAliasDef, // '!', Identifier, '=', Type
@@ -72,12 +72,19 @@ pub(crate) enum NodeKind {
     RegionList, // '(', 'Region', {',', Region}?, ')'
     Region, // '{', EntryBlock?, { Block }? ,'}'
     EntryBlock, // { Operation }
+    Block, // BlockLabel, OperationList
+    BlockLabel, // CaretIdentifier, BlockArgsList?, ':'
     AttributeEntry, // (Identifier | StringLiteral), '=', AttributeValue
     AttributeValue, // AttributeAlias | DialectAttribute | BuiltinAttribute
     ValueUseList, // ValueUse, { ',', ValueUse }?
     ValueUse, // ValueIdentifier, ('#', ValueIdentifier)?
     AttributeAliasDef, // '#', Identifier, '=', AttributeValue
     AttributeAlias, // '#', Identifier
+    DialectAttribute, // '#', (OpaqueDialectAttribute | PrettyDialectAttribute),
+    OpaqueDialectAttribute, // Identifier, DialectAttributeBody?
+    DialectAttributeBody, // '<', DialectAttributeContent+, '>'
+    DialectAttributeContent, // DialectAttributeBody | '(' DialectAttributeContent+ ')' | '[' DialectAttributeContent+ ']' | '{' DialectAttributeContent+ '}' | AnyThing except '<', '>', '(', ')', '[', ']', '{', '}', and '\0'
+    PrettyDialectAttribute, // Identifier, '.', [A-Za-z][A-Za-z0-9._]*, DialectAttributeBody?
 }
 
 pub(crate) struct AstNode {
