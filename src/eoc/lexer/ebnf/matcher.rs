@@ -120,14 +120,6 @@ impl LexerEbnfMatcher for LexerEbnfParserMatcherInner {
         }
     }
 
-    // fn contains_def(&self, name: &str) -> bool {
-    //     match self {
-    //         EbnfParserMatcherInner::Default(d) => d.contains_def(name),
-    //         EbnfParserMatcherInner::Vm(v) => v.contains_def(name),
-    //         EbnfParserMatcherInner::IR(r) => r.contains_def(name),
-    //     }
-    // }
-
     fn match_native_integer<'b>(
         &self,
         s: &'b [u8],
@@ -270,9 +262,19 @@ impl LexerEbnfMatcher for LexerEbnfParserMatcher {
         diagnostic: &Diagnostic,
         state: Option<&LexerVmState>,
     ) -> Option<(&'b [u8], TokenKind)> {
-        self.current_scope
+        let result = self.current_scope
             .as_ref()
-            .match_native(kind, s, source_manager, diagnostic, state)
+            .match_native(kind, s, source_manager, diagnostic, state);
+
+        if result.is_some() {
+            return result;
+        }
+
+        if let Some(parent_scope) = self.parent_scope.as_ref() {
+            parent_scope.match_native(kind, s, source_manager, diagnostic, state)
+        } else {
+            result
+        }
     }
 
     fn try_match_expr<'b>(
@@ -282,9 +284,19 @@ impl LexerEbnfMatcher for LexerEbnfParserMatcher {
         diagnostic: &Diagnostic,
         state: Option<&LexerVmState>,
     ) -> LexerMatchResult {
-        self.current_scope
+        let result = self.current_scope
             .as_ref()
-            .try_match_expr(s, source_manager, diagnostic, state)
+            .try_match_expr(s, source_manager, diagnostic, state);
+
+        if result.is_some() {
+            return result;
+        }
+
+        if let Some(parent_scope) = self.parent_scope.as_ref() {
+            parent_scope.try_match_expr(s, source_manager, diagnostic, state)
+        } else {
+            result
+        }
     }
 
     fn match_for<'b>(
@@ -294,9 +306,19 @@ impl LexerEbnfMatcher for LexerEbnfParserMatcher {
         source_manager: RelativeSourceManager<'b>,
         diagnostic: &Diagnostic,
     ) -> LexerMatchResult {
-        self.current_scope
+        let result = self.current_scope
             .as_ref()
-            .match_for(addr, s, source_manager, diagnostic)
+            .match_for(addr, s, source_manager, diagnostic);
+
+        if result.is_some() {
+            return result;
+        }
+
+        if let Some(parent_scope) = self.parent_scope.as_ref() {
+            parent_scope.match_for(addr, s, source_manager, diagnostic)
+        } else {
+            result
+        }
     }
     
     fn is_default(&self) -> bool {
