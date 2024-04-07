@@ -295,7 +295,7 @@ impl EbnfExpr {
                 exprs.iter().fold(true, |acc, e| acc && !e.is_empty())
             }
             EbnfExpr::Alternative(exprs, set, ..) => {
-                exprs.iter().fold(true, |acc, e| acc && !e.is_empty()) && set.is_empty()
+                exprs.iter().fold(true, |acc, e| acc && !e.is_empty()) && !set.is_empty()
             }
             EbnfExpr::Concat(exprs, ..) => exprs.iter().fold(true, |acc, e| acc && !e.is_empty()),
             EbnfExpr::Exception(exprs, ..) => {
