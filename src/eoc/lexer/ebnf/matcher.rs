@@ -6,7 +6,7 @@ use crate::eoc::{
 use super::{
     basic::{
         EbnfParserMatcher, EbnfParserMatcherInner, LexerEbnfMatcher, LexerEbnfParserMatcherInner,
-        LexerMatchResult,
+        LexerMatchResult, DEFAULT_LEXER_EBNF_PARSER_MATCHER,
     },
     default_matcher::DefaultLexerEbnfParserMatcher,
     expr::EbnfExpr,
@@ -221,6 +221,8 @@ impl From<LexerVm> for LexerEbnfParserMatcherInner {
 
 impl EbnfParserMatcher<DefaultLexerEbnfParserMatcher, LexerVm, IRLexerEbnfParserMatcher> {
     pub(crate) fn from_expr<'a>(&mut self, expr: EbnfExpr, diagnostic: &Diagnostic) {
+        let parent_scope = self.parent_scope.take().unwrap_or(DEFAULT_LEXER_EBNF_PARSER_MATCHER.to_imm_ref());
+        self.parent_scope = Some(parent_scope);
         let temp = LexerEbnfParserMatcherInner::from_expr(expr, &self, diagnostic);
 
         if self.current_scope.is_default() {
@@ -228,8 +230,8 @@ impl EbnfParserMatcher<DefaultLexerEbnfParserMatcher, LexerVm, IRLexerEbnfParser
             return;
         }
 
-        let current_scope = self.current_scope.take();
         let parent_scope = self.parent_scope.take();
+        let current_scope = self.current_scope.take();
         let old_self = Self {
             parent_scope,
             current_scope,
@@ -238,7 +240,7 @@ impl EbnfParserMatcher<DefaultLexerEbnfParserMatcher, LexerVm, IRLexerEbnfParser
         *self = Self {
             parent_scope: Some(Ref::new(old_self).take_as_imm_ref()),
             current_scope: Ref::new(temp),
-        }
+        };
     }
 }
 

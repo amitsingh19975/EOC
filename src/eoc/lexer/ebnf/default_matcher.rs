@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::eoc::{
     ast::identifier::Identifier,
     lexer::{
@@ -18,7 +20,8 @@ use super::{
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DefaultLexerEbnfParserMatcher {
-    nodes: Vec<VmNode>,
+    nodes: HashMap<UniqueString, usize>,
+    node_ids: Vec<VmNode>,
 }
 
 impl Default for DefaultLexerEbnfParserMatcher {
@@ -29,29 +32,39 @@ impl Default for DefaultLexerEbnfParserMatcher {
 
 impl DefaultLexerEbnfParserMatcher {
     pub(crate) fn new() -> Self {
-        let nodes = vec![
-            VmNode::NativeCall(LexerNativeCallKind::Identifier), //NATIVE_CALL_KIND_ID.to_native_call_kind(NATIVE_CALL_KIND_ID.identifier_sym).unwrap()),
-            VmNode::NativeCall(LexerNativeCallKind::Operator), //NATIVE_CALL_KIND_ID.to_native_call_kind(NATIVE_CALL_KIND_ID.operator_sym).unwrap()),
-            VmNode::NativeCall(LexerNativeCallKind::FloatingPoint), //NATIVE_CALL_KIND_ID.to_native_call_kind(NATIVE_CALL_KIND_ID.fp_sym).unwrap()),
-            VmNode::NativeCall(LexerNativeCallKind::Integer), //NATIVE_CALL_KIND_ID.to_native_call_kind(NATIVE_CALL_KIND_ID.integer_sym).unwrap()),
-            VmNode::NativeCall(LexerNativeCallKind::Number), //NATIVE_CALL_KIND_ID.to_native_call_kind(NATIVE_CALL_KIND_ID.number_sym).unwrap()),
-            VmNode::NativeCall(LexerNativeCallKind::Unknown), //NATIVE_CALL_KIND_ID.to_native_call_kind(NATIVE_CALL_KIND_ID.string_sym).unwrap()),
-            VmNode::NativeCall(LexerNativeCallKind::Unknown), //NATIVE_CALL_KIND_ID.to_native_call_kind(NATIVE_CALL_KIND_ID.char_sym).unwrap()),
-            VmNode::NativeCall(LexerNativeCallKind::StartIdentifier), //NATIVE_CALL_KIND_ID.to_native_call_kind(NATIVE_CALL_KIND_ID.start_identifier_sym).unwrap()),
-            VmNode::NativeCall(LexerNativeCallKind::ContIdentifier), //NATIVE_CALL_KIND_ID.to_native_call_kind(NATIVE_CALL_KIND_ID.cont_identifier_sym).unwrap()),
-            VmNode::NativeCall(LexerNativeCallKind::StartOperator), //NATIVE_CALL_KIND_ID.to_native_call_kind(NATIVE_CALL_KIND_ID.start_operator_sym).unwrap()),
-            VmNode::NativeCall(LexerNativeCallKind::ContOperator), //NATIVE_CALL_KIND_ID.to_native_call_kind(NATIVE_CALL_KIND_ID.cont_operator_sym).unwrap()),
-            VmNode::NativeCall(LexerNativeCallKind::Whitespace), //NATIVE_CALL_KIND_ID.to_native_call_kind(NATIVE_CALL_KIND_ID.whitespace_sym).unwrap()),
-            VmNode::NativeCall(LexerNativeCallKind::NewLine), //NATIVE_CALL_KIND_ID.to_native_call_kind(NATIVE_CALL_KIND_ID.new_line_sym).unwrap()),
-            VmNode::NativeCall(LexerNativeCallKind::Tab), //NATIVE_CALL_KIND_ID.to_native_call_kind(NATIVE_CALL_KIND_ID.tab_sym).unwrap()),
-            VmNode::NativeCall(LexerNativeCallKind::Letter), //NATIVE_CALL_KIND_ID.to_native_call_kind(NATIVE_CALL_KIND_ID.letter_sym).unwrap()),
-            VmNode::NativeCall(LexerNativeCallKind::AlphaNumeric), //NATIVE_CALL_KIND_ID.to_native_call_kind(NATIVE_CALL_KIND_ID.alpha_numeric_sym).unwrap()),
-            VmNode::NativeCall(LexerNativeCallKind::BinDigit), //NATIVE_CALL_KIND_ID.to_native_call_kind(NATIVE_CALL_KIND_ID.binary_digit_sym).unwrap()),
-            VmNode::NativeCall(LexerNativeCallKind::OctDigit), //NATIVE_CALL_KIND_ID.to_native_call_kind(NATIVE_CALL_KIND_ID.oct_digit_sym).unwrap()),
-            VmNode::NativeCall(LexerNativeCallKind::HexDigit), //NATIVE_CALL_KIND_ID.to_native_call_kind(NATIVE_CALL_KIND_ID.hex_digit_sym).unwrap()),
-            VmNode::NativeCall(LexerNativeCallKind::Digit), //NATIVE_CALL_KIND_ID.to_native_call_kind(NATIVE_CALL_KIND_ID.digit_sym).unwrap()),
-        ];
-        Self { nodes }
+        let mut node_ids = Vec::new();
+        let mut nodes = HashMap::new();
+
+        {
+            let mut insert = |node: VmNode| {
+                let id = node_ids.len();
+                let Some(name) = node.as_native_kind().map(|k| k.as_unique_str()) else {
+                    return
+                };
+                node_ids.push(node);
+                nodes.insert(name, id);
+            };
+
+            insert(VmNode::NativeCall(LexerNativeCallKind::Identifier));
+            insert(VmNode::NativeCall(LexerNativeCallKind::Operator));
+            insert(VmNode::NativeCall(LexerNativeCallKind::FloatingPoint));
+            insert(VmNode::NativeCall(LexerNativeCallKind::Integer));
+            insert(VmNode::NativeCall(LexerNativeCallKind::Number));
+            insert(VmNode::NativeCall(LexerNativeCallKind::StartIdentifier));
+            insert(VmNode::NativeCall(LexerNativeCallKind::ContIdentifier));
+            insert(VmNode::NativeCall(LexerNativeCallKind::StartOperator));
+            insert(VmNode::NativeCall(LexerNativeCallKind::ContOperator));
+            insert(VmNode::NativeCall(LexerNativeCallKind::Whitespace));
+            insert(VmNode::NativeCall(LexerNativeCallKind::NewLine));
+            insert(VmNode::NativeCall(LexerNativeCallKind::Tab));
+            insert(VmNode::NativeCall(LexerNativeCallKind::Letter));
+            insert(VmNode::NativeCall(LexerNativeCallKind::AlphaNumeric));
+            insert(VmNode::NativeCall(LexerNativeCallKind::BinDigit));
+            insert(VmNode::NativeCall(LexerNativeCallKind::OctDigit));
+            insert(VmNode::NativeCall(LexerNativeCallKind::HexDigit));
+            insert(VmNode::NativeCall(LexerNativeCallKind::Digit));
+        }
+        Self { nodes, node_ids }
     }
 
     pub(crate) fn is_valid_identifier_start_code_point(c: char) -> bool {
@@ -69,29 +82,17 @@ impl DefaultLexerEbnfParserMatcher {
     pub(crate) fn is_operator_continuation_code_point(c: char) -> bool {
         Identifier::is_operator_continuation_code_point(c)
     }
-
-    fn key_to_id(&self, key: UniqueString) -> Option<usize> {
-        self.nodes.iter().position(|n| {
-            let Some(i) = n.as_native_kind() else {
-                return false;
-            };
-            if *i == LexerNativeCallKind::Unknown {
-                return false;
-            }
-            i.as_unique_str() == key
-        })
-    }
 }
 
 impl EbnfNodeMatcher for DefaultLexerEbnfParserMatcher {
     fn get_node(&self, id: usize) -> Option<&VmNode> {
-        self.nodes.get(id)
+        self.node_ids.get(id)
     }
 }
 
 impl EbnfIdentifierMatcher for DefaultLexerEbnfParserMatcher {
     fn get_identifier(&self, name: UniqueString) -> Option<usize> {
-        self.key_to_id(name)
+        self.nodes.get(&name).copied()
     }
 }
 

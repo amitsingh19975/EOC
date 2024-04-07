@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 
+use lazy_static::lazy_static;
+
 use crate::eoc::{
     lexer::{
         number::{parse_floating_point, parse_integer},
@@ -160,15 +162,17 @@ impl<D, V, R> EbnfParserMatcherInner<D, V, R> {
 
     // function inliner to avoid performance overhead due to
     // environment lookups
-    pub(crate) fn get_vm_code_for(&self, nodes: &mut Vec<VmNode>, id: usize) -> usize
+    pub(crate) fn get_vm_code_for(&self, nodes: &mut Vec<VmNode>, id: usize, current_parent_node: Option<&VmNode>) -> (usize, u16)
     where
         Self: EbnfNodeMatcher,
     {
         let Some(node) = self.get_node(id) else {
-            return 0;
+            return (0, 0);
         };
+        // println!("node: {:?} | {:?}", node, nodes);
+        let start_len = nodes.len();
         match node {
-            VmNode::Call(addr) => return self.get_vm_code_for(nodes, *addr as usize),
+            VmNode::Call(addr) => return self.get_vm_code_for(nodes, *addr as usize, current_parent_node),
             VmNode::NativeCall(k) => {
                 nodes.push(VmNode::NativeCall(*k));
             }
@@ -179,52 +183,76 @@ impl<D, V, R> EbnfParserMatcherInner<D, V, R> {
             VmNode::Alternative(count, _) => {
                 let start = nodes.len();
                 let mut i = id + 1;
+                let mut size = 0;
                 for _ in 0..*count {
-                    i += self.get_vm_code_for(nodes, i);
+                    let (p, s) = self.get_vm_code_for(nodes, i, Some(node));
+                    i += p;
+                    size += s;
                 }
                 let off = nodes.len() - start + 1;
-                nodes.push(VmNode::Alternative(*count, off as u16));
+                if let Some(VmNode::Alternative(_, _)) = current_parent_node {
+                    // merge the two alternative nodes
+                } else {
+                    nodes.insert(start, VmNode::Alternative(size, off as u16));
+                    return (1, 1);
+                }
             }
             VmNode::Concat(count, _) => {
                 let start = nodes.len();
                 let mut i = id + 1;
+                let mut size = 0;
                 for _ in 0..*count {
-                    i += self.get_vm_code_for(nodes, i);
+                    let (p, s) = self.get_vm_code_for(nodes, i, Some(node));
+                    i += p;
+                    size += s;
                 }
                 let off = nodes.len() - start + 1;
-                nodes.push(VmNode::Concat(*count, off as u16));
+                if let Some(VmNode::Concat(_, _)) = current_parent_node {
+                    // merge the two concat nodes
+                } else {
+                    nodes.insert(start, VmNode::Concat(size, off as u16));
+                    return (1, 1);
+                }
             }
             VmNode::Exception(count, _) => {
                 let start = nodes.len();
                 let mut i = id + 1;
+                let mut size = 0;
                 for _ in 0..*count {
-                    i += self.get_vm_code_for(nodes, i);
+                    let (p, s) = self.get_vm_code_for(nodes, i, Some(node));
+                    i += p;
+                    size += s;
                 }
                 let off = nodes.len() - start + 1;
-                nodes.push(VmNode::Exception(*count, off as u16));
+                if let Some(VmNode::Exception(_, _)) = current_parent_node {
+                    // merge the two exception nodes
+                } else {
+                    nodes.insert(start, VmNode::Exception(size, off as u16));
+                    return (1, 1);
+                }
             }
             VmNode::Optional(_) => {
                 let start = nodes.len();
-                self.get_vm_code_for(nodes, id + 1);
+                self.get_vm_code_for(nodes, id + 1, Some(node));
                 let off = nodes.len() - start + 1;
                 nodes.push(VmNode::Optional(off as u16));
             }
             VmNode::Repetition(_) => {
                 let start = nodes.len();
-                self.get_vm_code_for(nodes, id + 1);
+                self.get_vm_code_for(nodes, id + 1, Some(node));
                 let off = nodes.len() - start + 1;
                 nodes.push(VmNode::Repetition(off as u16));
             }
             VmNode::Label(l, e, _) => {
                 let start = nodes.len();
-                self.get_vm_code_for(nodes, *e as usize);
+                self.get_vm_code_for(nodes, *e as usize, Some(node));
                 let off = nodes.len() - start + 1;
                 nodes.push(VmNode::Label(l.clone(), start as u16, off as u16));
             }
             VmNode::DebugPrint => {}
             VmNode::ErrorScope { error_id, off: _, span } => {
                 let start = nodes.len();
-                self.get_vm_code_for(nodes, id + 1);
+                self.get_vm_code_for(nodes, id + 1, Some(node));
                 let off = nodes.len() - start + 1;
                 nodes.push(VmNode::ErrorScope {
                     error_id: *error_id,
@@ -233,7 +261,8 @@ impl<D, V, R> EbnfParserMatcherInner<D, V, R> {
                 });
             }
         };
-        return 1;
+        let size = (nodes.len() - start_len) as u16;
+        return (1, size);
     }
 }
 
@@ -279,7 +308,7 @@ pub(crate) struct EbnfParserMatcher<D, V, R> {
     pub(crate) current_scope: Ref<EbnfParserMatcherInner<D, V, R>>,
 }
 
-impl<D: EbnfIdentifierMatcher, V: EbnfIdentifierMatcher, R: EbnfIdentifierMatcher>
+impl<D: EbnfIdentifierMatcher + Debug, V: EbnfIdentifierMatcher + Debug, R: EbnfIdentifierMatcher + Debug>
     EbnfParserMatcher<D, V, R>
 {
     pub(crate) fn get_identifier_with_scope<'a>(
@@ -287,7 +316,6 @@ impl<D: EbnfIdentifierMatcher, V: EbnfIdentifierMatcher, R: EbnfIdentifierMatche
         name: UniqueString,
     ) -> Option<(usize, ImmRef<EbnfParserMatcherInner<D, V, R>>)> {
         let mut scope = self;
-
         if let Some(id) = scope.current_scope.get_identifier(name) {
             return Some((id, scope.current_scope.to_imm_ref()));
         }
@@ -315,4 +343,12 @@ impl<D: EbnfIdentifierMatcher, V: EbnfIdentifierMatcher, R: EbnfIdentifierMatche
         }
         None
     }
+}
+
+lazy_static! {
+    pub(crate) static ref DEFAULT_LEXER_EBNF_PARSER_MATCHER: Ref<EbnfParserMatcher<DefaultLexerEbnfParserMatcher, LexerVm, IRLexerEbnfParserMatcher>> =
+        Ref::new(EbnfParserMatcher {
+            parent_scope: None,
+            current_scope: Ref::new(EbnfParserMatcherInner::Default(Default::default())),
+        });
 }

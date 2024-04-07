@@ -9,7 +9,11 @@ use smallvec::SmallVec;
 use crate::eoc::{
     lexer::{str_utils::ByteToCharIter, token::TokenKind},
     utils::{
-        diagnostic::{Diagnostic, DiagnosticBag, DiagnosticLevel}, imm_ref::ImmRef, source_manager::RelativeSourceManager, span::Span, string::UniqueString
+        diagnostic::{Diagnostic, DiagnosticBag, DiagnosticLevel},
+        imm_ref::ImmRef,
+        source_manager::RelativeSourceManager,
+        span::Span,
+        string::UniqueString,
     },
 };
 
@@ -100,6 +104,7 @@ pub(crate) trait EbnfVm<D, V, R> {
     {
         let mut import_list = HashSet::new();
         let mut errors = HashMap::new();
+
         match &mut expr {
             EbnfExpr::Statements(s, _) => {
                 let import = s.remove(0);
@@ -124,7 +129,15 @@ pub(crate) trait EbnfVm<D, V, R> {
 
         self.set_is_scoped(!import_list.contains("@all"));
 
-        self.from_expr_helper(expr, scopes, diagnostic, is_defined, &import_list, &errors);
+        self.from_expr_helper(
+            expr,
+            scopes,
+            diagnostic,
+            is_defined,
+            &import_list,
+            &errors,
+            None,
+        );
     }
 
     fn from_expr_helper<'a>(
@@ -135,7 +148,8 @@ pub(crate) trait EbnfVm<D, V, R> {
         is_defined: &mut HashMap<UniqueString, IdentifierDefinitionResult<D, V, R>>,
         import_list: &HashSet<String>,
         errors: &HashMap<String, u16>,
-    ) where
+        parent_node: Option<&VmNode>,
+    ) -> u16 where
         D: EbnfNodeMatcher + Debug,
         V: EbnfNodeMatcher + Debug,
         R: EbnfNodeMatcher + Debug,
@@ -155,7 +169,7 @@ pub(crate) trait EbnfVm<D, V, R> {
                             .add_info("Try to define the identifier", Some(span))
                             .commit();
                     }
-                    return;
+                    return 0;
                 };
                 let temp = if let Some((id, scope)) = is_defined.get(&s) {
                     Some((*id, scope.as_ref().map(|s| s.clone())))
@@ -176,13 +190,14 @@ pub(crate) trait EbnfVm<D, V, R> {
                             .add_info("Try to define the identifier", Some(span))
                             .commit();
                     }
-                    return;
+                    return 0;
                 };
 
                 if let Some(scope) = scope {
                     let temp = scope.as_ref();
                     let nodes = self.get_mut_nodes();
-                    temp.get_vm_code_for(nodes, id);
+                    let (_, s) = temp.get_vm_code_for(nodes, id, parent_node);
+                    return (s.max(1) - 1) as u16;
                 } else {
                     self.get_mut_nodes().push(VmNode::Call(id as u16));
                 }
@@ -215,18 +230,19 @@ pub(crate) trait EbnfVm<D, V, R> {
                 }
 
                 if v.is_empty() && (current_len != self.len()) {
-                    return;
+                    return 0;
                 }
 
                 size += v.len() as u16;
                 for item in v {
-                    self.from_expr_helper(
+                    size += self.from_expr_helper(
                         item,
                         scopes,
                         diagnostic,
                         is_defined,
                         import_list,
                         errors,
+                        Some(&VmNode::Alternative(size, 0)),
                     );
                 }
 
@@ -236,31 +252,33 @@ pub(crate) trait EbnfVm<D, V, R> {
             }
             EbnfExpr::Concat(v, _) | EbnfExpr::Extend(v, _) => {
                 let current_len = self.len();
-                let size = v.len() as u16;
+                let mut size = v.len() as u16;
                 for item in v {
-                    self.from_expr_helper(
+                    let c =  self.from_expr_helper(
                         item,
                         scopes,
                         diagnostic,
                         is_defined,
                         import_list,
                         errors,
+                        Some(&VmNode::Concat(size, 0)),
                     );
+                    size += c;
                 }
 
-                let off = self.get_mut_nodes().len() - current_len + 1;
+                let off = self.len() - current_len + 1;
                 self.get_mut_nodes()
                     .insert(current_len, VmNode::Concat(size, off as u16));
             }
             EbnfExpr::Exception(mut v, _) => {
                 let current_len = self.len();
-                let size = v.len() as u16;
+                let mut size = v.len() as u16;
                 if v.is_empty() {
-                    return;
+                    return 0;
                 }
 
                 let first = v.remove(0);
-                self.from_expr_helper(first, scopes, diagnostic, is_defined, import_list, errors);
+                size += self.from_expr_helper(first, scopes, diagnostic, is_defined, import_list, errors, Some(&VmNode::Exception(size, 0)));
 
                 if v.len() > 1 {
                     let alternative_start = self.len();
@@ -278,15 +296,16 @@ pub(crate) trait EbnfVm<D, V, R> {
                                 }
                             }
                             _ => {
-                                self.from_expr_helper(
+                                let c = self.from_expr_helper(
                                     item,
                                     scopes,
                                     diagnostic,
                                     is_defined,
                                     import_list,
                                     errors,
+                                    Some(&VmNode::Alternative(0, 0)),
                                 );
-                                count += 1;
+                                count += 1 + c;
                             }
                         }
                     }
@@ -303,13 +322,14 @@ pub(crate) trait EbnfVm<D, V, R> {
                     );
                 } else {
                     let item = v.remove(0);
-                    self.from_expr_helper(
+                    size += self.from_expr_helper(
                         item,
                         scopes,
                         diagnostic,
                         is_defined,
                         import_list,
                         errors,
+                        Some(&VmNode::Alternative(0, 0)),
                     );
                 }
 
@@ -319,14 +339,14 @@ pub(crate) trait EbnfVm<D, V, R> {
             }
             EbnfExpr::Optional(e, _) => {
                 let current_len = self.len();
-                self.from_expr_helper(*e, scopes, diagnostic, is_defined, import_list, errors);
+                self.from_expr_helper(*e, scopes, diagnostic, is_defined, import_list, errors, Some(&VmNode::Optional(0)));
                 let off = self.get_mut_nodes().len() - current_len + 1;
                 self.get_mut_nodes()
                     .insert(current_len, VmNode::Optional(off as u16));
             }
             EbnfExpr::Repetition(e, _) => {
                 let current_len = self.len();
-                self.from_expr_helper(*e, scopes, diagnostic, is_defined, import_list, errors);
+                self.from_expr_helper(*e, scopes, diagnostic, is_defined, import_list, errors, Some(&VmNode::Repetition(0)));
                 let off = self.get_mut_nodes().len() - current_len + 1;
                 self.get_mut_nodes()
                     .insert(current_len, VmNode::Repetition(off as u16));
@@ -336,7 +356,7 @@ pub(crate) trait EbnfVm<D, V, R> {
             }
             EbnfExpr::Statements(v, _) => {
                 v.into_iter().for_each(|item| {
-                    self.from_expr_helper(item, scopes, diagnostic, is_defined, import_list, errors)
+                    self.from_expr_helper(item, scopes, diagnostic, is_defined, import_list, errors, parent_node);
                 });
             }
             EbnfExpr::Variable { name, expr, is_def } => {
@@ -357,7 +377,7 @@ pub(crate) trait EbnfVm<D, V, R> {
                     }
                 }
 
-                self.from_expr_helper(*expr, scopes, diagnostic, is_defined, import_list, errors);
+                self.from_expr_helper(*expr, scopes, diagnostic, is_defined, import_list, errors, parent_node);
 
                 if !is_def {
                     let id_var = self.get_identifier_with_scope(name, scopes, true, import_list);
@@ -378,11 +398,11 @@ pub(crate) trait EbnfVm<D, V, R> {
                 self.get_mut_nodes().push(VmNode::AnyChar);
             }
             EbnfExpr::UnboundedExpr(e) => {
-                self.from_expr_helper(*e, scopes, diagnostic, is_defined, import_list, errors);
+                self.from_expr_helper(*e, scopes, diagnostic, is_defined, import_list, errors, parent_node);
             }
             EbnfExpr::LabelledExpr { label, expr } => {
                 let pos = self.len();
-                self.from_expr_helper(*expr, scopes, diagnostic, is_defined, import_list, errors);
+                self.from_expr_helper(*expr, scopes, diagnostic, is_defined, import_list, errors, parent_node);
                 let off = self.len() - pos + 1;
                 self.get_mut_nodes().insert(
                     pos,
@@ -396,7 +416,7 @@ pub(crate) trait EbnfVm<D, V, R> {
             EbnfExpr::Errors(_) => unreachable!("errors is already consumed"),
             EbnfExpr::ErrorLabel { label, expr, span } => {
                 let pos = self.len();
-                self.from_expr_helper(*expr, scopes, diagnostic, is_defined, import_list, errors);
+                self.from_expr_helper(*expr, scopes, diagnostic, is_defined, import_list, errors, parent_node);
                 let off = self.len() - pos + 1;
                 self.get_mut_nodes().insert(
                     pos,
@@ -408,6 +428,8 @@ pub(crate) trait EbnfVm<D, V, R> {
                 );
             }
         }
+        
+        0
     }
 
     fn len(&self) -> usize {
